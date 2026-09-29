@@ -94,6 +94,8 @@ safety, the SQLite store, the Telegram client against a scripted Bot API. **Not 
 the real Bot API**: the JSON shapes follow its documentation and are checked with a fake
 transport only.
 
+Next: becoming a client of `prism-hub` ([plan](docs/hub-integration.md)).
+
 Not built: other messengers, other kinds of source, reports about a whole region (`Київська
 область`), webhooks, more than one process. Limits are listed in the architecture document.
 

@@ -86,11 +86,11 @@ The price is a missed all-clear now and then; the safe failure is the person kee
 
 ## Ecosystem
 
-In the Prism ecosystem clients talk to `prism-hub`, which owns subscriptions and delivery.
-`h-ua-bot` does not: it is a self-contained product built directly on `prism-signal`, with its
-own store. The ports keep a route back. Replacing `Store` with a hub-backed one, and
-`Messenger` with `prism-bot`'s delivery, would make it a hub client without touching relevance.
-That is a decision to take when the hub grows subscriptions and location.
+In the Prism ecosystem clients talk to `prism-hub`, which owns subscriptions and delivery. This
+repository is a self-contained prototype that does not: it is built directly on `prism-signal`
+with its own store. The decision is to move behind the hub, and
+[`hub-integration.md`](hub-integration.md) says how and in what order. The ports (`Store`,
+`Messenger`) are the seam the move follows.
 
 ## Known limits
 
