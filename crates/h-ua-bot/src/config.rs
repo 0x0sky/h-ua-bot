@@ -24,7 +24,6 @@ impl std::fmt::Display for ConfigError {
 }
 
 /// Everything the bot is configured with.
-#[derive(Debug)]
 pub struct Config {
     /// Bot API token. Absent for commands that do not talk to Telegram.
     pub telegram_token: Option<String>,
@@ -38,6 +37,23 @@ pub struct Config {
     pub poll_interval: Duration,
     /// How the relay behaves.
     pub policy: RelayPolicy,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The token is a credential. A `{config:?}` in a log line must not carry it.
+        f.debug_struct("Config")
+            .field(
+                "telegram_token",
+                &self.telegram_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("telegram_api_base", &self.telegram_api_base)
+            .field("sources", &self.sources)
+            .field("db_path", &self.db_path)
+            .field("poll_interval", &self.poll_interval)
+            .field("policy", &self.policy)
+            .finish()
+    }
 }
 
 impl Config {
@@ -184,6 +200,18 @@ mod tests {
                 .unwrap_err()
                 .0
                 .contains("HUA_INCLUDE_TEXT")
+        );
+    }
+
+    #[test]
+    fn the_token_never_appears_when_settings_are_printed() {
+        let c = config(&[("HUA_TELEGRAM_TOKEN", "123456:SECRET-TOKEN")]).unwrap();
+        let shown = format!("{c:?}");
+        assert!(!shown.contains("SECRET-TOKEN"), "{shown}");
+        assert!(shown.contains("<redacted>"));
+        assert!(
+            !format!("{:?}", config(&[]).unwrap()).contains("<redacted>"),
+            "absent stays absent"
         );
     }
 
