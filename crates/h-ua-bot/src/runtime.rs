@@ -1,55 +1,41 @@
 // © 2026 aiaiaiai · aiaiaiai.org
 // SPDX-License-Identifier: MIT
 
-//! The running bot: source loops and client loops side by side.
+//! The running bot: the Telegram conversation and the hub's delivery endpoint side by side.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use h_ua_core::conversation::Conversation;
-use h_ua_core::message::source_label;
-use h_ua_core::ports::{Messenger, Store};
-use h_ua_core::relay::Relay;
-use h_ua_store::SqliteStore;
-use h_ua_telegram::{ReqwestTransport, TelegramClient};
-use prism_signal_normalize::Normalizer;
-use prism_signal_source::{EvidenceSource, SourceErrorKind};
-use prism_signal_source_telegram::{ReqwestPreviewFetcher, TelegramPreviewSource};
+use h_ua_core::message::Message;
+use h_ua_core::ports::{EventKind, Messenger, Subscriptions};
+use h_ua_hub::{HubClient, HubConfig, HubSubscriptions};
+use h_ua_telegram::{CLIENT_NAME, ReqwestTransport, TelegramClient};
+use prism_signal_normalize::Gazetteer;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
-use crate::ingest::Ingest;
+use crate::delivery::{self, DeliveryState};
 
-/// Alerts older than this are forgotten. Longer than any window that reads them.
-const DELIVERY_RETENTION_SECS: i64 = 24 * 60 * 60;
+/// Said when the hub could not be reached, so nobody believes a choice was saved when it was not.
+const NOT_SAVED: &str = "Не вдалося звʼязатися зі службою підписок. Нічого не збережено — спробуйте ще раз трохи згодом.";
 
-/// The longest a failing loop waits before trying again.
-const MAX_BACKOFF: Duration = Duration::from_secs(300);
-
-const USER_AGENT: &str = concat!(
-    "h-ua-bot/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/0x0sky/h-ua-bot)"
-);
-
-/// Seconds since the Unix epoch.
-pub fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
-        })
+fn required(value: Option<String>, name: &str) -> Result<String, String> {
+    value.ok_or_else(|| format!("{name} is not set"))
 }
 
 /// Runs the bot until interrupted.
 pub async fn run(config: Config) -> Result<(), String> {
-    let token = config
-        .telegram_token
-        .clone()
-        .ok_or("HUA_TELEGRAM_TOKEN is not set")?;
-    let store: Arc<dyn Store> =
-        Arc::new(SqliteStore::open(&config.db_path).map_err(|e| e.to_string())?);
-    let normalizer = Normalizer::embedded().map_err(|e| e.to_string())?;
+    let token = required(config.telegram_token.clone(), "HUA_TELEGRAM_TOKEN")?;
+    let hub = HubClient::new(HubConfig {
+        origin: required(config.hub_origin.clone(), "HUA_HUB_ORIGIN")?,
+        token: required(config.hub_token.clone(), "HUA_HUB_TOKEN")?,
+        provider: CLIENT_NAME.to_owned(),
+        provider_scope: config.hub_provider_scope.clone(),
+        alert_channel: config.alert_channel.clone(),
+    })
+    .map_err(|e| e.to_string())?;
+    let secret = required(config.delivery_secret.clone(), "HUA_DELIVERY_SECRET")?;
 
     let transport = ReqwestTransport::new(token, config.telegram_api_base.as_deref())
         .map_err(|e| e.to_string())?;
@@ -60,47 +46,28 @@ pub async fn run(config: Config) -> Result<(), String> {
         .map_err(|e| format!("Telegram refused the token: {e}"))?;
     info!(%username, "connected to Telegram");
 
-    let http = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut sources: Vec<Arc<dyn EvidenceSource>> = Vec::new();
-    for channel in &config.sources {
-        let fetcher = ReqwestPreviewFetcher::new(http.clone()).map_err(|e| e.to_string())?;
-        sources.push(Arc::new(TelegramPreviewSource::new(
-            channel.clone(),
-            fetcher,
-        )));
-    }
-    let labels: Vec<String> = sources
-        .iter()
-        .map(|s| source_label(s.source_id()))
-        .collect();
-    info!(sources = %labels.join(", "), "reading");
+    let gazetteer = Arc::new(Gazetteer::embedded().map_err(|e| e.to_string())?);
+    let subscriptions: Arc<dyn Subscriptions> = Arc::new(HubSubscriptions::new(hub));
+    let messenger: Arc<dyn Messenger> = telegram.clone();
 
-    let messenger: Arc<dyn Messenger> = telegram;
-    let relay = Arc::new(Relay::new(
-        store.clone(),
-        [messenger.clone()],
-        config.policy.clone(),
-    ));
-    let ingest = Arc::new(Ingest::new(store.clone(), relay, normalizer));
+    let listener = tokio::net::TcpListener::bind(config.delivery_listen)
+        .await
+        .map_err(|e| format!("cannot listen on {}: {e}", config.delivery_listen))?;
+    info!(address = %config.delivery_listen, "hub deliveries are accepted");
+    let app = delivery::router(DeliveryState::new(secret, telegram));
 
     let mut tasks = tokio::task::JoinSet::new();
-    let count = u32::try_from(sources.len()).unwrap_or(1).max(1);
-    for (index, source) in sources.into_iter().enumerate() {
-        // Spread the sources over the interval instead of reading them all at once.
-        let offset = config.poll_interval / count * u32::try_from(index).unwrap_or(0);
-        tasks.spawn(source_loop(
-            ingest.clone(),
-            source,
-            store.clone(),
-            config.poll_interval,
-            offset,
-        ));
-    }
-    tasks.spawn(client_loop(messenger, ingest, store, labels));
+    tasks.spawn(client_loop(
+        messenger,
+        subscriptions,
+        gazetteer,
+        config.sources.clone(),
+    ));
+    tasks.spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            error!(%error, "the delivery endpoint stopped");
+        }
+    });
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => info!("interrupted, stopping"),
@@ -109,37 +76,10 @@ pub async fn run(config: Config) -> Result<(), String> {
     Ok(())
 }
 
-async fn source_loop(
-    ingest: Arc<Ingest>,
-    source: Arc<dyn EvidenceSource>,
-    store: Arc<dyn Store>,
-    interval: Duration,
-    offset: Duration,
-) {
-    tokio::time::sleep(offset).await;
-    loop {
-        let now = unix_now();
-        let wait = match ingest.poll(&*source, now).await {
-            Ok(_) => interval,
-            Err(error) => {
-                warn!(source = %source.source_id(), %error, "cannot read source");
-                match error.kind {
-                    SourceErrorKind::RateLimited => interval * 4,
-                    _ => (interval * 2).min(MAX_BACKOFF),
-                }
-            }
-        };
-        if let Err(error) = store.purge_deliveries_before(now - DELIVERY_RETENTION_SECS) {
-            warn!(%error, "cannot purge old deliveries");
-        }
-        tokio::time::sleep(wait).await;
-    }
-}
-
 async fn client_loop(
     messenger: Arc<dyn Messenger>,
-    ingest: Arc<Ingest>,
-    store: Arc<dyn Store>,
+    subscriptions: Arc<dyn Subscriptions>,
+    gazetteer: Arc<Gazetteer>,
     labels: Vec<String>,
 ) {
     let mut backoff = Duration::from_secs(1);
@@ -148,20 +88,27 @@ async fn client_loop(
             Ok(events) => {
                 backoff = Duration::from_secs(1);
                 for event in events {
-                    // The replies are worked out before anything is awaited, so no borrow of the
-                    // store crosses a suspension point.
-                    let replies =
-                        Conversation::new(&*store, ingest.normalizer().gazetteer(), labels.clone())
-                            .handle(&event, unix_now());
-                    match replies {
-                        Ok(replies) => {
-                            for reply in replies {
-                                if let Err(error) = messenger.send(&event.from, &reply).await {
-                                    warn!(%error, to = %event.from, "reply not sent");
-                                }
+                    let live = matches!(event.kind, EventKind::Location { live: true, .. });
+                    let replies = Conversation::new(&*subscriptions, &gazetteer, labels.clone())
+                        .handle(&event)
+                        .await;
+                    let replies = match replies {
+                        Ok(replies) => replies,
+                        Err(error) => {
+                            warn!(%error, "cannot handle an event");
+                            // A live position updates in silence, and a failed update is
+                            // retried by the next one. Anything else a person is waiting on.
+                            if live {
+                                Vec::new()
+                            } else {
+                                vec![Message::text(NOT_SAVED)]
                             }
                         }
-                        Err(error) => warn!(%error, "cannot handle an event"),
+                    };
+                    for reply in replies {
+                        if let Err(error) = messenger.send(&event.from, &reply).await {
+                            warn!(%error, to = %event.from, "reply not sent");
+                        }
                     }
                 }
             }

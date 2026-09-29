@@ -3,7 +3,7 @@
 
 [package]
 name = "h-ua-core"
-description = "Domain, relevance, and relay logic of h-ua-bot; no I/O"
+description = "Conversation and subscription model of h-ua-bot; no I/O"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,11 +18,8 @@ workspace = true
 [dependencies]
 async-trait.workspace = true
 h3o.workspace = true
-prism-signal-core.workspace = true
 prism-signal-normalize.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
-tokio = { workspace = true }
 
 [dev-dependencies]
-serde_json.workspace = true
+tokio.workspace = true

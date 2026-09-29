@@ -70,6 +70,62 @@ impl<T: Transport> TelegramClient<T> {
     }
 }
 
+impl<T: Transport> TelegramClient<T> {
+    /// Sends text to a chat, and to a topic in it when `thread_id` is given, and returns the id
+    /// Telegram gave the message. This is what the hub's delivery endpoint uses.
+    pub async fn deliver(
+        &self,
+        chat: i64,
+        thread_id: Option<i64>,
+        text: &str,
+    ) -> Result<i64, SendError> {
+        self.send_message(json!(chat), thread_id, text, false)
+            .await?
+            .ok_or_else(|| SendError::Unavailable("sendMessage returned no message_id".to_owned()))
+    }
+
+    async fn send_message(
+        &self,
+        chat: Value,
+        thread_id: Option<i64>,
+        text: &str,
+        ask_location: bool,
+    ) -> Result<Option<i64>, SendError> {
+        let mut body = json!({
+            "chat_id": chat,
+            "text": text,
+            // A preview of the source post under every alert is noise, and the link is there
+            // for whoever wants the original.
+            "link_preview_options": {"is_disabled": true},
+        });
+        if let Some(thread) = thread_id {
+            body["message_thread_id"] = json!(thread);
+        }
+        if ask_location {
+            body["reply_markup"] = json!({
+                "keyboard": [[{"text": LOCATION_BUTTON, "request_location": true}]],
+                "resize_keyboard": true,
+                "one_time_keyboard": true,
+            });
+        }
+        let raw = self
+            .transport
+            .call("sendMessage", &body)
+            .await
+            .map_err(|e| SendError::Unavailable(e.to_string()))?;
+        let reply: Reply<Value> =
+            serde_json::from_value(raw).map_err(|e| SendError::Unavailable(e.to_string()))?;
+        if !reply.ok {
+            return Err(send_error(&reply));
+        }
+        Ok(reply
+            .result
+            .as_ref()
+            .and_then(|message| message.get("message_id"))
+            .and_then(Value::as_i64))
+    }
+}
+
 #[derive(Deserialize)]
 struct Me {
     username: Option<String>,
@@ -195,32 +251,9 @@ impl<T: Transport> Messenger for TelegramClient<T> {
     }
 
     async fn send(&self, to: &Recipient, message: &Message) -> Result<(), SendError> {
-        let mut body = json!({
-            "chat_id": chat_id(to),
-            "text": message.text,
-            // A preview of the source post under every alert is noise, and the link is there
-            // for whoever wants the original.
-            "link_preview_options": {"is_disabled": true},
-        });
-        if message.ask_location {
-            body["reply_markup"] = json!({
-                "keyboard": [[{"text": LOCATION_BUTTON, "request_location": true}]],
-                "resize_keyboard": true,
-                "one_time_keyboard": true,
-            });
-        }
-        let raw = self
-            .transport
-            .call("sendMessage", &body)
+        self.send_message(chat_id(to), None, &message.text, message.ask_location)
             .await
-            .map_err(|e| SendError::Unavailable(e.to_string()))?;
-        let reply: Reply<Value> =
-            serde_json::from_value(raw).map_err(|e| SendError::Unavailable(e.to_string()))?;
-        if reply.ok {
-            Ok(())
-        } else {
-            Err(send_error(&reply))
-        }
+            .map(|_| ())
     }
 
     async fn poll(&self) -> Result<Vec<Event>, ClientError> {
@@ -526,5 +559,58 @@ mod tests {
             "ua_alerts_bot"
         );
         assert_eq!(script.calls.lock().unwrap()[0].0, "getMe");
+    }
+
+    #[tokio::test]
+    async fn deliver_sends_to_the_chat_and_topic_and_returns_the_message_id() {
+        let (fake, script) =
+            Fake::answering(vec![Ok(json!({"ok": true, "result": {"message_id": 777}}))]);
+
+        let id = TelegramClient::new(fake)
+            .deliver(-1001, Some(5), "текст")
+            .await
+            .unwrap();
+
+        assert_eq!(id, 777);
+        let calls = script.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "sendMessage");
+        assert_eq!(calls[0].1["chat_id"], -1001);
+        assert_eq!(calls[0].1["message_thread_id"], 5);
+        assert_eq!(calls[0].1["text"], "текст");
+        assert!(calls[0].1.get("reply_markup").is_none());
+    }
+
+    #[tokio::test]
+    async fn deliver_without_a_topic_omits_it_and_maps_telegrams_refusals() {
+        let (fake, script) = Fake::answering(vec![
+            Ok(json!({"ok": true, "result": {"message_id": 1}})),
+            Ok(
+                json!({"ok": false, "error_code": 403, "description": "Forbidden: bot was blocked by the user"}),
+            ),
+            Ok(
+                json!({"ok": false, "error_code": 429, "description": "Too Many Requests", "parameters": {"retry_after": 7}}),
+            ),
+            Ok(json!({"ok": true, "result": {}})),
+        ]);
+        let client = TelegramClient::new(fake);
+
+        client.deliver(42, None, "x").await.unwrap();
+        assert!(
+            script.calls.lock().unwrap()[0]
+                .1
+                .get("message_thread_id")
+                .is_none()
+        );
+        assert_eq!(client.deliver(42, None, "x").await, Err(SendError::Blocked));
+        assert_eq!(
+            client.deliver(42, None, "x").await,
+            Err(SendError::RateLimited {
+                retry_after_secs: 7
+            })
+        );
+        assert!(matches!(
+            client.deliver(42, None, "x").await,
+            Err(SendError::Unavailable(_))
+        ));
     }
 }

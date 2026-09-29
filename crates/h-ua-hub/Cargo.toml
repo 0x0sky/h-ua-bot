@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 [package]
-name = "h-ua-store"
-description = "SQLite storage for h-ua-bot"
+name = "h-ua-hub"
+description = "prism-hub as the place h-ua-bot keeps its subscriptions"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,5 +16,14 @@ publish = false
 workspace = true
 
 [dependencies]
+async-trait.workspace = true
 h-ua-core = { path = "../h-ua-core" }
-rusqlite.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+axum.workspace = true

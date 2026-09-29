@@ -56,8 +56,9 @@ impl FromStr for Recipient {
 pub struct Subscription {
     /// Who.
     pub recipient: Recipient,
-    /// Where they are. Without a position nothing is relevant to them, so nothing is sent.
-    pub cell: Option<Cell>,
+    /// Where they are. Without a position nothing is relevant to them, so there is no
+    /// subscription without one.
+    pub cell: Cell,
     /// Which kinds of threat.
     pub categories: BTreeSet<Category>,
     /// Also warn when a threat is reported near, not at, their position.
@@ -65,11 +66,11 @@ pub struct Subscription {
 }
 
 impl Subscription {
-    /// A new subscription: every category, nearby warnings on, and no position yet.
-    pub fn new(recipient: Recipient) -> Self {
+    /// A new subscription at a position: every category, nearby warnings on.
+    pub fn new(recipient: Recipient, cell: Cell) -> Self {
         Self {
             recipient,
-            cell: None,
+            cell,
             categories: Category::ALL.into_iter().collect(),
             include_nearby: true,
         }
@@ -90,10 +91,11 @@ mod tests {
     }
 
     #[test]
-    fn a_new_subscription_wants_everything_and_knows_no_position() {
-        let subscription = Subscription::new(Recipient::new("telegram", "1"));
+    fn a_new_subscription_wants_everything() {
+        let cell = Cell::around(50.45, 30.52).unwrap();
+        let subscription = Subscription::new(Recipient::new("telegram", "1"), cell);
         assert_eq!(subscription.categories.len(), Category::ALL.len());
         assert!(subscription.include_nearby);
-        assert!(subscription.cell.is_none());
+        assert_eq!(subscription.cell, cell);
     }
 }

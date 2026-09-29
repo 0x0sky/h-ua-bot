@@ -10,7 +10,7 @@ use prism_signal_normalize::{Gazetteer, Place};
 use crate::category::Category;
 use crate::geo::Cell;
 use crate::message::{Message, NOT_OFFICIAL, PRIVACY};
-use crate::ports::{Event, EventKind, Store, StoreError};
+use crate::ports::{Event, EventKind, SubscriptionError, Subscriptions};
 use crate::subscriber::Subscription;
 
 /// A place from the gazetteer is named to a person only if it is this close to their cell, in
@@ -19,52 +19,54 @@ const NEAREST_PLACE_MAX_KM: f64 = 40.0;
 
 /// Handles what people send and answers them.
 pub struct Conversation<'a> {
-    store: &'a dyn Store,
+    subscriptions: &'a dyn Subscriptions,
     gazetteer: &'a Gazetteer,
     sources: Vec<String>,
 }
 
 impl<'a> Conversation<'a> {
     /// `sources` are the names shown to people as where alerts come from.
-    pub fn new(store: &'a dyn Store, gazetteer: &'a Gazetteer, sources: Vec<String>) -> Self {
+    pub fn new(
+        subscriptions: &'a dyn Subscriptions,
+        gazetteer: &'a Gazetteer,
+        sources: Vec<String>,
+    ) -> Self {
         Self {
-            store,
+            subscriptions,
             gazetteer,
             sources,
         }
     }
 
-    /// Handles one event and returns the replies, in order. `now` is seconds since the Unix
-    /// epoch.
-    pub fn handle(&self, event: &Event, now: i64) -> Result<Vec<Message>, StoreError> {
+    /// Handles one event and returns the replies, in order.
+    pub async fn handle(&self, event: &Event) -> Result<Vec<Message>, SubscriptionError> {
         match &event.kind {
-            EventKind::Command { name, args } => self.command(event, name, args, now),
-            EventKind::Location { lat, lon, live } => self.location(event, *lat, *lon, *live, now),
+            EventKind::Command { name, args } => self.command(event, name, args).await,
+            EventKind::Location { lat, lon, live } => self.location(event, *lat, *lon, *live).await,
             EventKind::Other => Ok(vec![Message::text(
                 "Я розумію команди та позицію. Надішліть /help, щоб побачити, що вмію.",
             )]),
         }
     }
 
-    fn command(
+    async fn command(
         &self,
         event: &Event,
         name: &str,
         args: &str,
-        now: i64,
-    ) -> Result<Vec<Message>, StoreError> {
+    ) -> Result<Vec<Message>, SubscriptionError> {
         match name {
             "start" | "help" => Ok(vec![self.welcome()]),
             "location" => Ok(vec![Message::asking_location(
                 "Натисніть кнопку нижче, щоб поділитися позицією. Якщо поділитеся «живою» позицією, я оновлюватиму її, поки ви рухаєтесь.",
             )]),
-            "kinds" => self.kinds(event, args, now),
-            "nearby" => self.nearby(event, args, now),
-            "status" => self.status(event),
+            "kinds" => self.kinds(event, args).await,
+            "nearby" => self.nearby(event, args).await,
+            "status" => self.status(event).await,
             "stop" => {
-                self.store.delete_recipient(&event.from)?;
+                self.subscriptions.delete(&event.from).await?;
                 Ok(vec![Message::text(
-                    "Готово: усі дані про вас видалено, повідомлень більше не буде. Щоб повернутись, надішліть /start.",
+                    "Готово: підписку й позицію видалено, повідомлень більше не буде. Технічний ідентифікатор чату лишається в системі, але без підписки нічого не надсилається. Щоб повернутись, надішліть /start і поділіться позицією.",
                 )])
             }
             _ => Ok(vec![Message::text(
@@ -92,27 +94,27 @@ impl<'a> Conversation<'a> {
         ))
     }
 
-    fn location(
+    async fn location(
         &self,
         event: &Event,
         lat: f64,
         lon: f64,
         live: bool,
-        now: i64,
-    ) -> Result<Vec<Message>, StoreError> {
+    ) -> Result<Vec<Message>, SubscriptionError> {
         let Ok(cell) = Cell::around(lat, lon) else {
             return Ok(vec![Message::text(
                 "Не можу прочитати цю позицію. Спробуйте ще раз.",
             )]);
         };
-        let mut subscription = self
-            .store
-            .subscription(&event.from)?
-            .unwrap_or_else(|| Subscription::new(event.from.clone()));
-        let changed = subscription.cell != Some(cell);
-        subscription.cell = Some(cell);
-        if changed || !live {
-            self.store.save_subscription(&subscription, now)?;
+        // The choices already made are kept when the position moves.
+        let existing = self.subscriptions.get(&event.from).await?;
+        let known = existing.is_some();
+        let mut subscription =
+            existing.unwrap_or_else(|| Subscription::new(event.from.clone(), cell));
+        let changed = subscription.cell != cell;
+        subscription.cell = cell;
+        if !known || changed || !live {
+            self.subscriptions.save(&subscription).await?;
         }
         if live {
             // A live position updates in silence: a message per movement would be spam.
@@ -125,11 +127,23 @@ impl<'a> Conversation<'a> {
         ))])
     }
 
-    fn kinds(&self, event: &Event, args: &str, now: i64) -> Result<Vec<Message>, StoreError> {
-        let mut subscription = self
-            .store
-            .subscription(&event.from)?
-            .unwrap_or_else(|| Subscription::new(event.from.clone()));
+    /// Choices are made on a subscription, and a subscription needs a position first.
+    async fn subscription_or_ask(
+        &self,
+        event: &Event,
+    ) -> Result<Result<Subscription, Vec<Message>>, SubscriptionError> {
+        Ok(self.subscriptions.get(&event.from).await?.ok_or_else(|| {
+            vec![Message::asking_location(
+                "Спершу поділіться позицією: без неї я не знаю, що вас стосується.",
+            )]
+        }))
+    }
+
+    async fn kinds(&self, event: &Event, args: &str) -> Result<Vec<Message>, SubscriptionError> {
+        let mut subscription = match self.subscription_or_ask(event).await? {
+            Ok(subscription) => subscription,
+            Err(reply) => return Ok(reply),
+        };
         let words: Vec<&str> = args
             .split(|c: char| c.is_whitespace() || c == ',')
             .filter(|word| !word.is_empty())
@@ -154,61 +168,50 @@ impl<'a> Conversation<'a> {
             }
         }
         subscription.categories = chosen;
-        self.store.save_subscription(&subscription, now)?;
+        self.subscriptions.save(&subscription).await?;
         Ok(vec![Message::text(format!(
             "Гаразд, стежу за: {}.",
             describe(&subscription.categories)
         ))])
     }
 
-    fn nearby(&self, event: &Event, args: &str, now: i64) -> Result<Vec<Message>, StoreError> {
-        let mut subscription = self
-            .store
-            .subscription(&event.from)?
-            .unwrap_or_else(|| Subscription::new(event.from.clone()));
+    async fn nearby(&self, event: &Event, args: &str) -> Result<Vec<Message>, SubscriptionError> {
+        let mut subscription = match self.subscription_or_ask(event).await? {
+            Ok(subscription) => subscription,
+            Err(reply) => return Ok(reply),
+        };
         match args.trim().to_lowercase().as_str() {
             "on" | "так" | "вкл" | "увімк" => subscription.include_nearby = true,
             "off" | "ні" | "викл" | "вимк" => subscription.include_nearby = false,
             _ => {
-                let state = if subscription.include_nearby {
-                    "увімкнено"
-                } else {
-                    "вимкнено"
-                };
                 return Ok(vec![Message::text(format!(
-                    "Попередження про загрози поруч: {state}.\nЩоб змінити: /nearby так або /nearby ні\n\
-                     «Поруч» — коли джерело пише, що щось летить повз або біля вашого міста, а не на нього."
+                    "Попередження про загрози поруч: {}.\nЩоб змінити: /nearby так або /nearby ні\n\
+                     «Поруч» — коли джерело пише, що щось летить повз або біля вашого міста, а не на нього.",
+                    on_off(subscription.include_nearby)
                 ))]);
             }
         }
-        self.store.save_subscription(&subscription, now)?;
-        let state = if subscription.include_nearby {
-            "увімкнено"
-        } else {
-            "вимкнено"
-        };
+        self.subscriptions.save(&subscription).await?;
         Ok(vec![Message::text(format!(
-            "Попередження про загрози поруч: {state}."
+            "Попередження про загрози поруч: {}.",
+            on_off(subscription.include_nearby)
         ))])
     }
 
-    fn status(&self, event: &Event) -> Result<Vec<Message>, StoreError> {
-        let Some(subscription) = self.store.subscription(&event.from)? else {
+    async fn status(&self, event: &Event) -> Result<Vec<Message>, SubscriptionError> {
+        let Some(subscription) = self.subscriptions.get(&event.from).await? else {
             return Ok(vec![Message::asking_location(
                 "Я ще нічого про вас не знаю. Поділіться позицією, і я почну стежити.",
             )]);
         };
-        let place = subscription.cell.map_or(
-            "позицію не задано — повідомлень не буде".to_owned(),
-            |cell| self.near(cell),
-        );
         let sources = if self.sources.is_empty() {
             "—".to_owned()
         } else {
             self.sources.join(", ")
         };
         Ok(vec![Message::text(format!(
-            "Позиція: {place}\nВиди: {}\nЗагрози поруч: {}\nДжерела: {sources}\n\n{NOT_OFFICIAL}",
+            "Позиція: {}\nВиди: {}\nЗагрози поруч: {}\nДжерела: {sources}\n\n{NOT_OFFICIAL}",
+            self.near(subscription.cell),
             describe(&subscription.categories),
             if subscription.include_nearby {
                 "так"
@@ -236,6 +239,14 @@ fn nearest(gazetteer: &Gazetteer, cell: Cell) -> Option<&Place> {
         .filter(|(_, distance)| *distance <= NEAREST_PLACE_MAX_KM)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(place, _)| place)
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on {
+        "увімкнено"
+    } else {
+        "вимкнено"
+    }
 }
 
 fn describe(categories: &BTreeSet<Category>) -> String {

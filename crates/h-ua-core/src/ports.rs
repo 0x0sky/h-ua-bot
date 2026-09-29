@@ -1,13 +1,12 @@
 // © 2026 aiaiaiai · aiaiaiai.org
 // SPDX-License-Identifier: MIT
 
-//! What the core needs from the outside world: messengers to talk through and a store to keep
-//! subscriptions in. Adapters implement these; the core never names one.
+//! What the core needs from the outside world: messengers to talk through and somewhere subscriptions
+//! live. Adapters implement these; the core never names one.
 
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::category::Category;
 use crate::message::Message;
 use crate::subscriber::{Recipient, Subscription};
 
@@ -82,80 +81,23 @@ pub trait Messenger: Send + Sync {
     async fn poll(&self) -> Result<Vec<Event>, ClientError>;
 }
 
-/// A store failed.
+/// The subscriptions could not be read or changed.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
-#[error("store error: {0}")]
-pub struct StoreError(pub String);
+#[error("subscriptions unavailable: {0}")]
+pub struct SubscriptionError(pub String);
 
-/// An alert that was sent, kept so it is neither repeated nor left uncorrected.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Delivery {
-    /// Who got it.
-    pub recipient: Recipient,
-    /// The post it came from.
-    pub external_id: String,
-    /// Which kind of threat.
-    pub category: Category,
-    /// Which place it was about.
-    pub place_id: String,
-    /// When it was sent, in seconds since the Unix epoch.
-    pub at: i64,
-}
-
-/// Durable state: subscriptions, source cursors, and sent alerts.
+/// Where subscriptions live. In production that is `prism-hub`; the bot keeps nothing itself.
 ///
-/// Times are passed in as seconds since the Unix epoch, so behaviour is testable without a
-/// clock.
-pub trait Store: Send + Sync {
-    /// One person's subscription.
-    fn subscription(&self, recipient: &Recipient) -> Result<Option<Subscription>, StoreError>;
+/// A subscription always has a position, because without one nothing is relevant to a person and
+/// the hub holds no subscription for them.
+#[async_trait]
+pub trait Subscriptions: Send + Sync {
+    /// One person's subscription, or `None` if they have none.
+    async fn get(&self, recipient: &Recipient) -> Result<Option<Subscription>, SubscriptionError>;
 
-    /// Creates or replaces a subscription.
-    fn save_subscription(&self, subscription: &Subscription, now: i64) -> Result<(), StoreError>;
+    /// Creates or replaces a person's subscription.
+    async fn save(&self, subscription: &Subscription) -> Result<(), SubscriptionError>;
 
-    /// Removes everything kept about a person: subscription and sent alerts.
-    fn delete_recipient(&self, recipient: &Recipient) -> Result<(), StoreError>;
-
-    /// Every subscription that has a position.
-    fn located_subscriptions(&self) -> Result<Vec<Subscription>, StoreError>;
-
-    /// A saved position in a source or a messenger, such as the last post id read.
-    fn cursor(&self, key: &str) -> Result<Option<String>, StoreError>;
-
-    /// Saves a cursor.
-    fn set_cursor(&self, key: &str, value: &str) -> Result<(), StoreError>;
-
-    /// Whether this exact alert was already sent.
-    fn was_delivered(
-        &self,
-        recipient: &Recipient,
-        external_id: &str,
-        category: Category,
-        place_id: &str,
-    ) -> Result<bool, StoreError>;
-
-    /// Whether any alert of this category about this place was sent since `since`.
-    fn delivered_since(
-        &self,
-        recipient: &Recipient,
-        category: Category,
-        place_id: &str,
-        since: i64,
-    ) -> Result<bool, StoreError>;
-
-    /// Remembers a sent alert.
-    fn record_delivery(&self, delivery: &Delivery) -> Result<(), StoreError>;
-
-    /// Removes and returns the alerts sent since `since`, optionally only of one category and
-    /// only about the given places. Used to send a correction to exactly the people who got the
-    /// alert.
-    fn take_deliveries(
-        &self,
-        since: i64,
-        category: Option<Category>,
-        place_ids: Option<&[String]>,
-    ) -> Result<Vec<Delivery>, StoreError>;
-
-    /// Forgets alerts sent before `before`.
-    fn purge_deliveries_before(&self, before: i64) -> Result<usize, StoreError>;
+    /// Removes the person's subscription, and with it the position it held.
+    async fn delete(&self, recipient: &Recipient) -> Result<(), SubscriptionError>;
 }

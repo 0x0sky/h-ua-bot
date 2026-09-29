@@ -1,23 +1,19 @@
 // © 2026 aiaiaiai · aiaiaiai.org
 // SPDX-License-Identifier: MIT
 
-//! The heart of h-ua-bot: who is told about what, and when.
+//! The conversation of h-ua-bot: what it says to a person and what it asks the hub to keep.
 //!
-//! The core does no I/O. It reads hazard [`Reading`](prism_signal_normalize::Reading)s produced
-//! by `prism-signal-normalize`, decides which people they concern, and hands messages to
-//! [`Messenger`](ports::Messenger)s. A messenger and a store are ports; Telegram and SQLite are
-//! adapters behind them.
+//! The core does no I/O. A messenger and a subscription store are ports; Telegram and `prism-hub`
+//! are adapters behind them. Reading sources, judging reports, and deciding whom to tell all live
+//! in `prism-signal` and `prism-hub`, not here.
 //!
 //! What a person gives is a position, and it is kept as a coarse [`Cell`](geo::Cell), never as
-//! coordinates. What they receive is only what concerns that cell.
+//! coordinates.
 
 pub mod category;
-pub mod conformance;
 pub mod conversation;
 pub mod geo;
 pub mod memory;
 pub mod message;
 pub mod ports;
-pub mod relay;
-pub mod relevance;
 pub mod subscriber;

@@ -3,11 +3,9 @@
 
 //! The kinds of threat a person can subscribe to.
 //!
-//! The reader tells five kinds apart; a person chooses among three. `КАБ` and drones warn of
-//! different things, while a cruise, a ballistic, and an unspecified missile all mean the same
-//! to someone deciding whether to go to shelter.
-
-use prism_signal_normalize::HazardKind;
+//! A person chooses among three. `КАБ` and drones warn of different things, while a cruise, a
+//! ballistic, and an unspecified missile all mean the same to someone deciding whether to go to
+//! shelter. The hub uses the same three names.
 
 /// What a person subscribes to.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -23,17 +21,6 @@ pub enum Category {
 impl Category {
     /// Every category, in display order.
     pub const ALL: [Category; 3] = [Category::Drone, Category::Bomb, Category::Missile];
-
-    /// The category a hazard kind belongs to.
-    pub fn of(kind: HazardKind) -> Self {
-        match kind {
-            HazardKind::Drone => Self::Drone,
-            HazardKind::GuidedBomb => Self::Bomb,
-            HazardKind::CruiseMissile | HazardKind::BallisticMissile | HazardKind::Missile => {
-                Self::Missile
-            }
-        }
-    }
 
     /// Stable key used in storage.
     pub fn key(self) -> &'static str {
@@ -77,32 +64,12 @@ impl Category {
     }
 }
 
-/// Name of a hazard kind in an alert.
-pub fn kind_label(kind: HazardKind) -> &'static str {
-    match kind {
-        HazardKind::Drone => "БпЛА (дрон)",
-        HazardKind::GuidedBomb => "КАБ",
-        HazardKind::CruiseMissile => "Крилаті ракети",
-        HazardKind::BallisticMissile => "Балістика",
-        HazardKind::Missile => "Ракети",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn every_kind_has_a_category_and_every_key_round_trips() {
-        assert_eq!(Category::of(HazardKind::Drone), Category::Drone);
-        assert_eq!(Category::of(HazardKind::GuidedBomb), Category::Bomb);
-        for kind in [
-            HazardKind::CruiseMissile,
-            HazardKind::BallisticMissile,
-            HazardKind::Missile,
-        ] {
-            assert_eq!(Category::of(kind), Category::Missile);
-        }
+    fn every_key_round_trips() {
         for category in Category::ALL {
             assert_eq!(Category::from_key(category.key()), Some(category));
         }
