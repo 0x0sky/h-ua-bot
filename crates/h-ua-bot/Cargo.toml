@@ -1,0 +1,35 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "h-ua-bot"
+description = "Relays air-threat reports from public channels to the people they concern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "h-ua-bot"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+h-ua-core = { path = "../h-ua-core" }
+h-ua-store = { path = "../h-ua-store" }
+h-ua-telegram = { path = "../h-ua-telegram" }
+prism-signal-core.workspace = true
+prism-signal-normalize.workspace = true
+prism-signal-source.workspace = true
+prism-signal-source-telegram.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,28 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "h-ua-core"
+description = "Domain, relevance, and relay logic of h-ua-bot; no I/O"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+h3o.workspace = true
+prism-signal-core.workspace = true
+prism-signal-normalize.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json.workspace = true
