@@ -1,0 +1,39 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: MIT
+
+[workspace]
+members = [
+  "crates/h-ua-core",
+  "crates/h-ua-hub",
+  "crates/h-ua-telegram",
+  "crates/h-ua-bot",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/0x0sky/h-ua-bot"
+authors = ["0x0sky"]
+
+[workspace.dependencies]
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+h3o = "0.9"
+prism-signal-normalize = { git = "https://github.com/aiaiaiai-org/prism-signal", rev = "b33e4e8c6d9d3cc9d21c25fca539082db06a08c3" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

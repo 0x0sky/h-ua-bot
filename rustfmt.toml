@@ -1,0 +1,6 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: Apache-2.0
+
+edition = "2024"
+use_field_init_shorthand = true
+use_try_shorthand = true
