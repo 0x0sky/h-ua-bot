@@ -191,3 +191,20 @@ async fn a_failed_delivery_can_be_retried_and_then_goes_through() {
     assert_eq!((first, second), (502, 200));
     assert_eq!(answer["delivery"]["provider_message_id"], 1000);
 }
+
+#[tokio::test]
+async fn health_answers_without_a_secret_and_sends_nothing() {
+    let (url, telegram) = serve().await;
+    let health = url.replace("/api/v1/delivery", "/health");
+
+    let response = reqwest::get(&health).await.unwrap();
+
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({"status": "ok"})
+    );
+    assert!(telegram.sent.lock().unwrap().is_empty());
+    let posted = reqwest::Client::new().post(&health).send().await.unwrap();
+    assert_eq!(posted.status().as_u16(), 405);
+}
