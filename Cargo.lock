@@ -736,7 +736,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 [[package]]
 name = "prism-signal-core"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/aiaiaiai-org/prism-signal?rev=b33e4e8c6d9d3cc9d21c25fca539082db06a08c3#b33e4e8c6d9d3cc9d21c25fca539082db06a08c3"
+source = "git+https://github.com/aiaiaiai-org/prism-signal?rev=4ef6b9ff09f1cb192fa9b4c47d7fd3e9d20a8ac0#4ef6b9ff09f1cb192fa9b4c47d7fd3e9d20a8ac0"
 dependencies = [
  "serde",
  "thiserror",
@@ -746,7 +746,7 @@ dependencies = [
 [[package]]
 name = "prism-signal-normalize"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/aiaiaiai-org/prism-signal?rev=b33e4e8c6d9d3cc9d21c25fca539082db06a08c3#b33e4e8c6d9d3cc9d21c25fca539082db06a08c3"
+source = "git+https://github.com/aiaiaiai-org/prism-signal?rev=4ef6b9ff09f1cb192fa9b4c47d7fd3e9d20a8ac0#4ef6b9ff09f1cb192fa9b4c47d7fd3e9d20a8ac0"
 dependencies = [
  "prism-signal-core",
  "serde",
