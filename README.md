@@ -83,6 +83,19 @@ It long-polls Telegram, so Telegram needs no public address. The hub does: it de
 A hub delivers every Telegram message through one bot origin, so give this bot its own hub, or
 make sure it is the only Telegram bot that hub delivers through.
 
+## Container
+
+`Dockerfile` builds a small image (Rust build stage, `distroless` runtime, not root). It listens on
+`1927`, the port infra gives every production workload: `GET /health` answers without a secret,
+and `POST /api/v1/delivery` is where the hub delivers. Configuration is the `HUA_*` environment.
+
+```bash
+docker build -t h-ua-bot .
+```
+
+`.github/workflows/image.yml` proves the image builds on every pull request and publishes
+`ghcr.io/0x0sky/h-ua-bot:<commit>` on a merge to `master`. Publishing an image does not deploy it.
+
 ## Layout
 
 | Crate | Owns |

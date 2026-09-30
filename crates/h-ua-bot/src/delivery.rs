@@ -16,7 +16,7 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use h_ua_core::ports::SendError;
 use h_ua_telegram::{TelegramClient, Transport};
 use serde::Deserialize;
@@ -100,9 +100,16 @@ impl DeliveryState {
 /// The endpoint as a router.
 pub fn router(state: Arc<DeliveryState>) -> Router {
     Router::new()
+        .route("/health", get(health))
         .route("/api/v1/delivery", post(delivery))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state)
+}
+
+/// Whether the process is up and serving. It says nothing about Telegram or the hub, and asks
+/// for no secret, so a supervisor can poll it.
+async fn health() -> Response {
+    (StatusCode::OK, axum::Json(json!({"status": "ok"}))).into_response()
 }
 
 #[derive(Deserialize)]
