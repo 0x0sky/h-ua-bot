@@ -1,0 +1,38 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: MIT
+
+name: Validate deploy contract
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/validate-deploy.yml'
+      - 'docs/production-deploy.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate encrypted handoff and manual activation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          file=.github/workflows/deploy-production.yml
+          grep -Fq 'workflow_dispatch:' "$file"
+          ! grep -Eq '^[[:space:]]+push:' "$file"
+          grep -Fq 'environment:' "$file"
+          grep -Fq 'name: production' "$file"
+          grep -Fq 'INFRA_AGE_RECIPIENT' "$file"
+          grep -Fq 'age --armor --recipient' "$file"
+          grep -Fq 'GHCR_PULL_TOKEN=' "$file"
+          grep -Fq 'secrets_age: $envelope' "$file"
+          grep -Fq 'repos/${INFRA_REPOSITORY}/dispatches' "$file"
+          grep -Fq 'refs/heads/master' "$file"
+          ! grep -Fq 'SSH_PRIVATE_KEY' "$file"
+          ! grep -Fq 'toJSON(secrets)' "$file"
