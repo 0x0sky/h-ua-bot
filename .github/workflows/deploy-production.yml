@@ -1,0 +1,124 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: MIT
+#
+# Only an explicit manual action requests deployment. Secret values never enter
+# repository_dispatch plaintext; infra decrypts them with its SSH identity.
+name: Deploy production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: h-ua-bot-production
+  cancel-in-progress: false
+
+jobs:
+  request:
+    name: Request encrypted infra deployment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+    env:
+      INFRA_REPOSITORY: aiaiaiai-org/infra
+      RELEASE_SHA: ${{ github.sha }}
+      RELEASE_REF: ${{ github.ref }}
+      HUA_TELEGRAM_TOKEN: ${{ secrets.HUA_TELEGRAM_TOKEN }}
+      HUA_HUB_TOKEN: ${{ secrets.HUA_HUB_TOKEN }}
+      HUA_DELIVERY_SECRET: ${{ secrets.HUA_DELIVERY_SECRET }}
+      INFRA_AGE_RECIPIENT: ${{ vars.INFRA_AGE_RECIPIENT }}
+      INFRA_DEPLOY_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
+      REGISTRY_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate release and deployment credentials
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$RELEASE_REF" = refs/heads/master || {
+            echo "::error::Deploy only a merged master commit." >&2
+            exit 1
+          }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INFRA_AGE_RECIPIENT" == ssh-ed25519\ * || "$INFRA_AGE_RECIPIENT" == ssh-rsa\ * ]] || {
+            echo "::error::Set the infra target's public SSH key as production Variable INFRA_AGE_RECIPIENT." >&2
+            exit 1
+          }
+          for name in HUA_TELEGRAM_TOKEN HUA_HUB_TOKEN HUA_DELIVERY_SECRET INFRA_DEPLOY_TOKEN REGISTRY_TOKEN; do
+            test -n "${!name:-}" || {
+              echo "::error::Production credential $name is missing." >&2
+              exit 1
+            }
+            [[ "${!name}" != *$'\n'* && "${!name}" != *$'\r'* ]] || {
+              echo "::error::Production credential $name must be one line." >&2
+              exit 1
+            }
+          done
+          (( ${#HUA_DELIVERY_SECRET} >= 32 )) || {
+            echo "::error::HUA_DELIVERY_SECRET must be at least 32 characters." >&2
+            exit 1
+          }
+
+      - name: Verify immutable image is available
+        shell: bash
+        env:
+          IMAGE: ghcr.io/0x0sky/h-ua-bot:${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+          docker buildx imagetools inspect "$IMAGE" >/dev/null || {
+            echo "::error::Master image is not published. Wait for Image workflow." >&2
+            exit 1
+          }
+          docker logout ghcr.io >/dev/null
+
+      - name: Encrypt and dispatch scoped runtime credentials
+        shell: bash
+        env:
+          IMAGE: ghcr.io/0x0sky/h-ua-bot:${{ github.sha }}
+          GH_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          umask 077
+          cleanup() {
+            rm -f "$RUNNER_TEMP/hua-source.env" "$RUNNER_TEMP/hua-secrets.age" "$RUNNER_TEMP/hua-dispatch.json"
+          }
+          trap cleanup EXIT
+          {
+            printf 'HUA_TELEGRAM_TOKEN=%s\n' "$HUA_TELEGRAM_TOKEN"
+            printf 'HUA_HUB_TOKEN=%s\n' "$HUA_HUB_TOKEN"
+            printf 'HUA_DELIVERY_SECRET=%s\n' "$HUA_DELIVERY_SECRET"
+            printf 'GHCR_PULL_USER=%s\n' "$GITHUB_ACTOR"
+            printf 'GHCR_PULL_TOKEN=%s\n' "$REGISTRY_TOKEN"
+          } > "$RUNNER_TEMP/hua-source.env"
+          age --armor --recipient "$INFRA_AGE_RECIPIENT" \
+            --output "$RUNNER_TEMP/hua-secrets.age" "$RUNNER_TEMP/hua-source.env"
+
+          jq -n \
+            --arg workload h-ua-bot \
+            --arg image "$IMAGE" \
+            --arg source "$GITHUB_REPOSITORY" \
+            --arg ref "$RELEASE_SHA" \
+            --rawfile envelope "$RUNNER_TEMP/hua-secrets.age" \
+            '{event_type: "deploy-workload", client_payload: {
+              workload: $workload, image: $image,
+              source_repository: $source, ref: $ref, secrets_age: $envelope
+            }}' > "$RUNNER_TEMP/hua-dispatch.json"
+
+          gh api --method POST "repos/${INFRA_REPOSITORY}/dispatches" --input "$RUNNER_TEMP/hua-dispatch.json"
+          {
+            echo "### Deployment requested (not yet confirmed)"
+            echo
+            echo "- Workload: \`h-ua-bot\`"
+            echo "- Source commit: \`$RELEASE_SHA\`"
+            echo "- Image: \`$IMAGE\`"
+            echo "- Destination: \`$INFRA_REPOSITORY\`"
+            echo "- Credentials: encrypted for infra production SSH identity"
+            echo
+            echo "Verify the corresponding infra Deploy workload run before claiming activation."
+          } >> "$GITHUB_STEP_SUMMARY"
