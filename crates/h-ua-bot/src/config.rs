@@ -223,6 +223,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_mixed_case_channels_keep_their_labels_and_canonical_ids() {
+        let c = config(&[("HUA_SOURCES", " @War_Monitor , Kpszsu ")]).unwrap();
+        assert_eq!(c.sources[0].id, "telegram:war_monitor");
+        assert_eq!(c.sources[0].label, "@War_Monitor");
+        assert_eq!(c.sources[1].id, "telegram:kpszsu");
+        assert_eq!(c.sources[1].label, "@Kpszsu");
+    }
+
+    #[test]
+    fn legacy_channels_reject_case_insensitive_duplicates() {
+        let error = config(&[("HUA_SOURCES", "War_Monitor,@war_monitor")])
+            .unwrap_err()
+            .0;
+        assert!(error.contains("duplicate source metadata"));
+    }
+
+    #[test]
     fn bad_values_are_named_not_defaulted() {
         let bad = [
             ("HUA_SOURCES", "a b", "HUA_SOURCES"),

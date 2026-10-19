@@ -40,7 +40,7 @@ impl Source {
     /// A legacy Telegram channel, preserving its current public label.
     pub fn telegram_channel(name: &str) -> Self {
         Self {
-            id: format!("telegram:{name}"),
+            id: format!("telegram:{}", name.to_ascii_lowercase()),
             kind: SourceKind::TelegramChannel,
             label: format!("@{name}"),
         }
@@ -56,6 +56,14 @@ mod tests {
         let source = Source::telegram_channel("vanek_nikolaev");
         assert_eq!(source.id, "telegram:vanek_nikolaev");
         assert_eq!(source.label, "@vanek_nikolaev");
+        assert_eq!(source.kind, SourceKind::TelegramChannel);
+    }
+
+    #[test]
+    fn telegram_identity_is_case_insensitive_but_preserves_the_label() {
+        let source = Source::telegram_channel("War_Monitor");
+        assert_eq!(source.id, Source::telegram_channel("war_monitor").id);
+        assert_eq!(source.label, "@War_Monitor");
         assert_eq!(source.kind, SourceKind::TelegramChannel);
     }
 
