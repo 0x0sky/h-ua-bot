@@ -2,7 +2,7 @@
 
 A bot that tells people about air threats near them, and only those.
 
-You give it one thing: where you are. It reads public Telegram channels, works out from each post
+You give it one thing: where you are. Prism currently reads public Telegram channels, works out from each post
 which places are in danger, and messages you only when that includes yours. Drones, guided
 bombs, and missiles, each on its own switch.
 
@@ -96,6 +96,21 @@ docker build -t h-ua-bot .
 `.github/workflows/image.yml` proves the image builds on every pull request and publishes
 `ghcr.io/0x0sky/h-ua-bot:<commit>` on a merge to `master`. Publishing an image does not deploy it.
 
+## Preparing multiple sources
+
+The bot can **describe** a typed source catalog without assuming every source is a Telegram
+channel. Set `HUA_SOURCES_JSON` (and unset legacy `HUA_SOURCES`) to a JSON array containing
+`id` (stable source identifier), `kind` (`telegram_channel`, `api`, `rss`, `website`, or
+`webhook`), and `label` (what the bot shows in `/start` and `/status`). The older
+comma-separated `HUA_SOURCES` is still supported.
+
+This catalog is **display-only**. It must contain only sources already active in Prism Hub;
+configuring a name here never creates a collector, proves its authority, or enables an
+incoming webhook. Prism Hub collects feeds and retains provenance, `prism-signal` evaluates
+reports, and Porter includes attribution in each alert. An API's official status does not
+make this bot an official warning service. Do not count a Telegram repost and its upstream
+API record as independent corroboration.
+
 ## Layout
 
 | Crate | Owns |
@@ -120,7 +135,7 @@ against the real Bot API**: the JSON shapes follow its documentation and are che
 transport only. The whole path, from a channel post to a message in a chat, has not been run
 end to end.
 
-Not built: other messengers, other kinds of source, reports about a whole region (`Київська
+Not built: other messengers, actual collection of non-Telegram sources, reports about a whole region (`Київська
 область`), webhooks, more than one process. Limits are listed in the architecture document.
 
 Licensed under MIT.

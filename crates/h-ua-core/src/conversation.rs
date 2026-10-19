@@ -11,6 +11,7 @@ use crate::category::Category;
 use crate::geo::Cell;
 use crate::message::{Message, NOT_OFFICIAL, PRIVACY};
 use crate::ports::{Event, EventKind, SubscriptionError, Subscriptions};
+use crate::source::Source;
 use crate::subscriber::Subscription;
 
 /// A place from the gazetteer is named to a person only if it is this close to their cell, in
@@ -21,7 +22,7 @@ const NEAREST_PLACE_MAX_KM: f64 = 40.0;
 pub struct Conversation<'a> {
     subscriptions: &'a dyn Subscriptions,
     gazetteer: &'a Gazetteer,
-    sources: Vec<String>,
+    sources: Vec<Source>,
 }
 
 impl<'a> Conversation<'a> {
@@ -29,7 +30,7 @@ impl<'a> Conversation<'a> {
     pub fn new(
         subscriptions: &'a dyn Subscriptions,
         gazetteer: &'a Gazetteer,
-        sources: Vec<String>,
+        sources: Vec<Source>,
     ) -> Self {
         Self {
             subscriptions,
@@ -77,13 +78,13 @@ impl<'a> Conversation<'a> {
 
     fn welcome(&self) -> Message {
         let sources = if self.sources.is_empty() {
-            "відкриті канали".to_owned()
+            "підключені джерела".to_owned()
         } else {
-            self.sources.join(", ")
+            self.sources.iter().map(|s| s.label.as_str()).collect::<Vec<_>>().join(", ")
         };
         Message::asking_location(format!(
             "Я повідомляю про повітряні загрози біля вас: дрони, КАБи, ракети. Лише про ті, що стосуються вашого місця.\n\n\
-             Як це працює: ви ділитесь позицією, я читаю публічні джерела ({sources}) і надсилаю лише те, що стосується вашої околиці.\n\n\
+             Як це працює: ви ділитесь позицією, система отримує сигнали з підключених джерел ({sources}), а я надсилаю лише те, що стосується вашої околиці.\n\n\
              {NOT_OFFICIAL}\n\n{PRIVACY}\n\n\
              Команди:\n\
              /location — поділитися позицією\n\
@@ -207,7 +208,7 @@ impl<'a> Conversation<'a> {
         let sources = if self.sources.is_empty() {
             "—".to_owned()
         } else {
-            self.sources.join(", ")
+            self.sources.iter().map(|s| s.label.as_str()).collect::<Vec<_>>().join(", ")
         };
         Ok(vec![Message::text(format!(
             "Позиція: {}\nВиди: {}\nЗагрози поруч: {}\nДжерела: {sources}\n\n{NOT_OFFICIAL}",

@@ -3,7 +3,12 @@
 
 //! Settings, read from the environment.
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
+
+use h_ua_core::source::Source;
+#[cfg(test)]
+use h_ua_core::source::SourceKind;
 
 /// Shortest shared secret accepted, in characters. It is all that stands between the internet and
 /// a message to anyone who ever used the bot.
@@ -25,9 +30,8 @@ pub struct Config {
     pub telegram_token: Option<String>,
     /// Bot API base URL, for a local Bot API server.
     pub telegram_api_base: Option<String>,
-    /// Channels named to people as where alerts come from. Which sources the hub reads is the
-    /// hub's setting; this is only what the bot says.
-    pub sources: Vec<String>,
+    /// Display-only source catalog. Collection and active source truth belong to Prism Hub.
+    pub sources: Vec<Source>,
     /// The hub's origin.
     pub hub_origin: Option<String>,
     /// This bot's credential at the hub.
@@ -80,23 +84,55 @@ impl Config {
                 .filter(|v| !v.is_empty())
         };
 
-        let sources_text = get("HUA_SOURCES").unwrap_or_else(|| "vanek_nikolaev".to_owned());
-        let sources = sources_text
-            .split(',')
-            .map(|name| name.trim().trim_start_matches('@'))
-            .filter(|name| !name.is_empty())
-            .map(|name| {
-                if channel(name) {
-                    Ok(format!("@{name}"))
-                } else {
-                    Err(ConfigError(format!(
-                        "HUA_SOURCES has an invalid channel `{name}`"
-                    )))
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if sources.is_empty() {
-            return Err(ConfigError("HUA_SOURCES names no channel".to_owned()));
+        // The JSON catalog supports non-Telegram sources without giving the bot ingestion logic.
+        // The older comma-separated list remains supported for existing deployments.
+        let sources = if let Some(catalog) = get("HUA_SOURCES_JSON") {
+            if get("HUA_SOURCES").is_some() {
+                return Err(ConfigError(
+                    "set either HUA_SOURCES_JSON or HUA_SOURCES, not both".to_owned(),
+                ));
+            }
+            let sources: Vec<Source> = serde_json::from_str(&catalog)
+                .map_err(|_| ConfigError("HUA_SOURCES_JSON must be an array of source descriptors".to_owned()))?;
+            sources
+        } else {
+            let sources_text = get("HUA_SOURCES").unwrap_or_else(|| "vanek_nikolaev".to_owned());
+            sources_text
+                .split(',')
+                .map(|name| name.trim().trim_start_matches('@'))
+                .filter(|name| !name.is_empty())
+                .map(|name| {
+                    if channel(name) {
+                        Ok(Source::telegram_channel(name))
+                    } else {
+                        Err(ConfigError(format!(
+                            "HUA_SOURCES has an invalid channel `{name}`"
+                        )))
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        if sources.is_empty() || sources.len() > 32 {
+            return Err(ConfigError("source catalog must have 1 to 32 entries".to_owned()));
+        }
+        let mut source_ids = HashSet::new();
+        for source in &sources {
+            let valid_id = !source.id.is_empty()
+                && source.id.len() <= 128
+                && source.id.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b':' | b'.' | b'_' | b'-')
+                });
+            if !valid_id
+                || source.label.trim() != source.label
+                || source.label.is_empty()
+                || source.label.chars().count() > 100
+                || source.label.chars().any(char::is_control)
+                || !source_ids.insert(&source.id)
+            {
+                return Err(ConfigError("source catalog has invalid or duplicate source metadata".to_owned()));
+            }
         }
 
         let hub_origin = get("HUA_HUB_ORIGIN");
@@ -162,7 +198,7 @@ mod tests {
     #[test]
     fn the_defaults_name_the_first_channel_and_need_nothing_secret() {
         let c = config(&[]).unwrap();
-        assert_eq!(c.sources, ["@vanek_nikolaev"]);
+        assert_eq!(c.sources, [Source::telegram_channel("vanek_nikolaev")]);
         assert_eq!(c.hub_provider_scope, "h-ua-bot");
         assert_eq!(c.alert_channel, "alerts");
         assert_eq!(c.delivery_listen, SocketAddr::from(([0, 0, 0, 0], 8080)));
@@ -172,14 +208,14 @@ mod tests {
     #[test]
     fn several_channels_are_listed_with_or_without_an_at_sign() {
         let c = config(&[("HUA_SOURCES", "vanek_nikolaev, @other_channel ,")]).unwrap();
-        assert_eq!(c.sources, ["@vanek_nikolaev", "@other_channel"]);
+        assert_eq!(c.sources, [Source::telegram_channel("vanek_nikolaev"), Source::telegram_channel("other_channel")]);
     }
 
     #[test]
     fn bad_values_are_named_not_defaulted() {
         let bad = [
             ("HUA_SOURCES", "a b", "HUA_SOURCES"),
-            ("HUA_SOURCES", " , ", "names no channel"),
+            ("HUA_SOURCES", " , ", "source catalog"),
             ("HUA_HUB_ORIGIN", "http://hub.example", "https://"),
             ("HUA_DELIVERY_SECRET", "short", "HUA_DELIVERY_SECRET"),
             ("HUA_DELIVERY_LISTEN", "everywhere", "HUA_DELIVERY_LISTEN"),
@@ -188,6 +224,36 @@ mod tests {
             let error = config(&[(key, value)]).unwrap_err().0;
             assert!(error.contains(expected), "{key}: {error}");
         }
+    }
+
+    #[test]
+    fn structured_sources_can_describe_official_api_and_rss_without_enabling_ingest() {
+        let c = config(&[(
+            "HUA_SOURCES_JSON",
+            r#"[{"id":"api:alarm","kind":"api","label":"Повітряна тривога"},{"id":"feed:dsns","kind":"rss","label":"ДСНС"}]"#,
+        )])
+        .unwrap();
+        assert_eq!(c.sources.len(), 2);
+        assert_eq!(c.sources[0].kind, SourceKind::Api);
+        assert_eq!(c.sources[1].kind, SourceKind::Rss);
+    }
+
+    #[test]
+    fn structured_catalog_rejects_duplicates_invalid_names_and_legacy_conflicts() {
+        let invalid = [
+            r#"[{"id":"api:alarm","kind":"api","label":"Air"},{"id":"api:alarm","kind":"api","label":"Again"}]"#,
+            r#"[{"id":"api:alarm","kind":"api","label":"Name\\nInjected"}]"#,
+            r#"[{"id":"API:alarm","kind":"api","label":"Wrong ID"}]"#,
+            r#"[{"id":"api:alarm","kind":"unknown","label":"Unknown"}]"#,
+            r#"[]"#,
+        ];
+        for catalog in invalid {
+            assert!(config(&[("HUA_SOURCES_JSON", catalog)]).is_err(), "{catalog}");
+        }
+        assert!(config(&[
+            ("HUA_SOURCES", "vanek_nikolaev"),
+            ("HUA_SOURCES_JSON", r#"[{"id":"api:a","kind":"api","label":"API"}]"#),
+        ]).is_err());
     }
 
     #[test]

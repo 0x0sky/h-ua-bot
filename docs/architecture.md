@@ -20,7 +20,14 @@
 ```
 
 The bot is a **client**. It turns Telegram into hub API calls and hub deliveries into Telegram
-messages, and holds no subscription, source, or alert logic. Two things flow through it:
+messages, and holds no subscription, source, or alert logic.
+
+Its public `Source` descriptors (`id`, `kind`, `label`) are presentation metadata only:
+`HUA_SOURCES_JSON` allows names for APIs, RSS, websites, and partner webhooks alongside Telegram
+channels, while legacy `HUA_SOURCES` continues to work. Neither setting provisions collection.
+Only list activated upstreams; source provenance, authority, deduplication, and retraction
+remain owned by Prism Hub and `prism-signal`. The client must not infer an all-clear from
+the absence of reports, including API timeouts or stale feeds. Two things flow through it:
 
 - **What a person says** (a command, a position) is answered by the `Conversation` and, when it
   changes what they asked for, saved to the hub as a subscription.
