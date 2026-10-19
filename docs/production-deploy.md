@@ -13,28 +13,41 @@ In **0x0sky/h-ua-bot → Settings → Environments → production** configure:
 | Secret | `HUA_TELEGRAM_TOKEN` | BotFather token |
 | Secret | `HUA_HUB_TOKEN` | Scoped Prism Hub machine credential |
 | Secret | `HUA_DELIVERY_SECRET` | At least 32 characters; must match the Prism Hub delivery gateway |
-| Secret | `INFRA_DEPLOY_TOKEN` | Limited credential to dispatch and inspect `aiaiaiai-org/infra` workflows |
-| Secret | `GHCR_PULL_TOKEN` | Dedicated, revocable, non-ephemeral GHCR credential with `read:packages` access to this bot image; must remain valid while infra is queued or awaiting approval |
-| Variable | `GHCR_PULL_USER` | GitHub account associated with `GHCR_PULL_TOKEN` |
-| Variable | `INFRA_AGE_RECIPIENT` | **Public** SSH key corresponding to `edge-prod-2` infra Environment's `SSH_PRIVATE_KEY` |
+| Secret | `INFRA_DEPLOY_TOKEN` | Dispatch `aiaiaiai-org/infra` (Contents: write), plus read its Actions runs and artifacts (Actions: read) |
+| Variable | `HUA_HUB_ORIGIN` | Optional; defaults to `https://api.aiaiaiai.org/prism-hub` |
+| Variable | `HUA_HUB_PROVIDER_SCOPE` | Optional; defaults to `h-ua-bot` |
+| Variable | `HUA_ALERT_CHANNEL` | Optional; defaults to `alerts` |
+| Variable | `HUA_SOURCES` | Optional; defaults to `vanek_nikolaev` |
 
-Obtain the public recipient through infra's manual **Show workload encryption
-recipient** workflow (choose `edge-prod-2`). Never copy the private SSH key
-to this repository.
+Neither `INFRA_AGE_RECIPIENT` nor `GHCR_PULL_TOKEN`/`GHCR_PULL_USER` nor
+SSH/VPS configuration belongs in this repository. Infra owns its private SSH
+key, target placement, public encryption recipient, and GHCR login.
 
-The non-secret source configuration is reviewed in
-`aiaiaiai-org/infra/contracts/services/h-ua-bot.yaml`: Hub origin, scope,
-alert channel and source labels. Changing those requires a contract PR, not
-production secrets.
+The bot requests an infra recipient using `issue-workload-recipient`; infra
+resolves its target and returns a *public-only*, one-day GitHub Actions
+artifact, correlated to the bot workflow run ID. The bot fetches and
+validates it, then encrypts its own three runtime secrets and four runtime variables. The target private
+key never appears in the artifact or dispatch payload. Infra's new recipient
+workflow must be merged before the producer is deployed.
+
+Infra's `contracts/services/h-ua-bot.yaml` owns placement, network, health,
+registry and an explicit allowlist of environment variable **names**; their
+values belong to the bot's Environment or its in-repository defaults.
+The encrypted envelope is checked against this allowlist before activation.
 
 The bot image is published on merge to master by the `Image` workflow. After
-the image is available, manually run **Deploy production** on master. The
-workflow validates the image and credentials, encrypts only the credentials
-allowed by the contract, includes the separately scoped `GHCR_PULL_TOKEN` in the encrypted envelope,
-and dispatches the exact release image to infra. This token must not be the
-producer job\'s `GITHUB_TOKEN`: that token expires when the job completes,
-possibly before infra authenticates to GHCR. Rotate the dedicated credential
-according to its expiration policy and retain only package read access.
+the image is available, manually run **Deploy production** on master.
+The producer verifies the image using its own job-scoped `GITHUB_TOKEN`
+but does not forward that token to infra. It requests and validates an
+infra-owned public encryption recipient, encrypts **only** the three HUA
+runtime secrets plus the four producer-owned HUA variables, and dispatches the
+immutable release image to infra.
+
+Infra authenticates to GHCR using its **own** Environment registry
+credential (`GHCR_PULL_TOKEN`, `GHCR_PULL_USER`) or its job-scoped
+`GITHUB_TOKEN` when that token is authorized to read the package.
+For private images, ensure infra has package-read access.
+Application secrets are not copied to infra's GitHub Secrets store.
 
 **The dispatch job confirms acceptance only, not live activation.** Confirm
 the corresponding `infra → Deploy workload` job succeeds, then test

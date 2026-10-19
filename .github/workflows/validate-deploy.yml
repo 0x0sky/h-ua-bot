@@ -33,22 +33,29 @@ jobs:
             fi
             grep -Fq 'environment:' "$candidate" || return 1
             grep -Fq 'name: production' "$candidate" || return 1
-            grep -Fq 'INFRA_AGE_RECIPIENT' "$candidate" || return 1
+            grep -Fq 'issue-workload-recipient' "$candidate" || return 1
+            grep -Fq 'gh run download' "$candidate" || return 1
             grep -Fq 'age --armor --recipient' "$candidate" || return 1
-            grep -Fq 'GHCR_PULL_TOKEN=' "$candidate" || return 1
-            grep -Fq 'GHCR_PULL_TOKEN: ' "$candidate" || return 1
-            grep -Fq 'GHCR_PULL_USER: ' "$candidate" || return 1
+            grep -Fq 'HUA_TELEGRAM_TOKEN=%s' "$candidate" || return 1
+            grep -Fq 'HUA_HUB_TOKEN=%s' "$candidate" || return 1
+            grep -Fq 'HUA_DELIVERY_SECRET=%s' "$candidate" || return 1
+            grep -Fq 'vars.HUA_HUB_ORIGIN' "$candidate" || return 1
+            grep -Fq 'vars.HUA_HUB_PROVIDER_SCOPE' "$candidate" || return 1
+            grep -Fq 'vars.HUA_ALERT_CHANNEL' "$candidate" || return 1
+            grep -Fq 'vars.HUA_SOURCES' "$candidate" || return 1
+            grep -Fq 'HUA_HUB_ORIGIN=%s' "$candidate" || return 1
+            grep -Fq 'HUA_HUB_PROVIDER_SCOPE=%s' "$candidate" || return 1
+            grep -Fq 'HUA_ALERT_CHANNEL=%s' "$candidate" || return 1
+            grep -Fq 'HUA_SOURCES=%s' "$candidate" || return 1
             grep -Fq 'secrets_age: $envelope' "$candidate" || return 1
             grep -Fq 'repos/${INFRA_REPOSITORY}/dispatches' "$candidate" || return 1
             grep -Fq 'refs/heads/master' "$candidate" || return 1
-            if grep -Fq 'SSH_PRIVATE_KEY' "$candidate"; then
-              echo "::error::Private SSH keys must not be consumed by the producer." >&2
-              return 1
-            fi
-            if grep -Fq 'toJSON(secrets)' "$candidate"; then
-              echo "::error::All-secrets forwarding is forbidden." >&2
-              return 1
-            fi
+            for forbidden in 'SSH_PRIVATE_KEY' 'toJSON(secrets)' 'vars.INFRA_AGE_RECIPIENT' 'secrets.GHCR_PULL_TOKEN' 'vars.GHCR_PULL_USER' 'GHCR_PULL_TOKEN=%s' 'GHCR_PULL_USER=%s'; do
+              if grep -Fq "$forbidden" "$candidate"; then
+                echo "::error::Forbidden producer-owned setting: $forbidden" >&2
+                return 1
+              fi
+            done
           }
 
           validate_contract "$file"
@@ -77,3 +84,12 @@ jobs:
             echo "::error::All-secrets regression was accepted." >&2
             exit 1
           fi
+
+          for forbidden in 'vars.INFRA_AGE_RECIPIENT' 'secrets.GHCR_PULL_TOKEN' 'vars.GHCR_PULL_USER'; do
+            cp "$file" "$fixtures/foreign.yml"
+            printf '%s\n' "      forbidden: $forbidden" >> "$fixtures/foreign.yml"
+            if validate_contract "$fixtures/foreign.yml"; then
+              echo "::error::Foreign infra setting regression was accepted: $forbidden" >&2
+              exit 1
+            fi
+          done
