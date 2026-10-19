@@ -34,6 +34,10 @@ jobs:
             grep -Fq 'environment:' "$candidate" || return 1
             grep -Fq 'name: production' "$candidate" || return 1
             grep -Fq 'issue-workload-recipient' "$candidate" || return 1
+            grep -Fq 'repos/${INFRA_REPOSITORY}/contents/.github/workflows/issue-workload-recipient.yml?ref=master' "$candidate" || return 1
+            grep -Fq 'repos/${INFRA_REPOSITORY}/actions/workflows/issue-workload-recipient.yml' "$candidate" || return 1
+            grep -Fq 'INFRA_DEPLOY_TOKEN cannot access private repository' "$candidate" || return 1
+            grep -Fq 'INFRA_DEPLOY_TOKEN requires Contents: write' "$candidate" || return 1
             grep -Fq 'gh run download' "$candidate" || return 1
             grep -Fq 'age --armor --recipient' "$candidate" || return 1
             grep -Fq 'HUA_TELEGRAM_TOKEN=%s' "$candidate" || return 1
