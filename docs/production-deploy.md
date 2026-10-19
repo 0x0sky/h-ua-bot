@@ -23,6 +23,16 @@ Neither `INFRA_AGE_RECIPIENT` nor `GHCR_PULL_TOKEN`/`GHCR_PULL_USER` nor
 SSH/VPS configuration belongs in this repository. Infra owns its private SSH
 key, target placement, public encryption recipient, and GHCR login.
 
+Before running deployment, make sure the recipient workflow from
+[aiaiaiai-org/infra#47](https://github.com/aiaiaiai-org/infra/pull/47)
+is merged into **infra/master**. The producer stops before dispatch if the
+infra repository cannot be read, the workflow is absent, or its Actions
+metadata cannot be read. A GitHub HTTP 404 may mean an unmerged workflow
+or a token not authorized to access a private repository. Verify that
+`INFRA_DEPLOY_TOKEN` has explicit access to `aiaiaiai-org/infra`,
+`Contents: write`, `Actions: read`, and any required organization approval.
+Do not paste the token into CI logs.
+
 The bot requests an infra recipient using `issue-workload-recipient`; infra
 resolves its target and returns a *public-only*, one-day GitHub Actions
 artifact, correlated to the bot workflow run ID. The bot fetches and
