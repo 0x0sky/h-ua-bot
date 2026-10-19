@@ -3,6 +3,7 @@
 #
 # Only an explicit manual action requests deployment. Secret values never enter
 # repository_dispatch plaintext; infra decrypts them with its SSH identity.
+# Registry access uses a separately scoped credential that outlives dispatch.
 name: Deploy production
 
 on:
@@ -32,7 +33,8 @@ jobs:
       HUA_DELIVERY_SECRET: ${{ secrets.HUA_DELIVERY_SECRET }}
       INFRA_AGE_RECIPIENT: ${{ vars.INFRA_AGE_RECIPIENT }}
       INFRA_DEPLOY_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
-      REGISTRY_TOKEN: ${{ github.token }}
+      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+      GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
     steps:
       - name: Validate release and deployment credentials
         shell: bash
@@ -47,7 +49,7 @@ jobs:
             echo "::error::Set the infra target's public SSH key as production Variable INFRA_AGE_RECIPIENT." >&2
             exit 1
           }
-          for name in HUA_TELEGRAM_TOKEN HUA_HUB_TOKEN HUA_DELIVERY_SECRET INFRA_DEPLOY_TOKEN REGISTRY_TOKEN; do
+          for name in HUA_TELEGRAM_TOKEN HUA_HUB_TOKEN HUA_DELIVERY_SECRET INFRA_DEPLOY_TOKEN GHCR_PULL_TOKEN; do
             test -n "${!name:-}" || {
               echo "::error::Production credential $name is missing." >&2
               exit 1
@@ -57,6 +59,10 @@ jobs:
               exit 1
             }
           done
+          [[ "$GHCR_PULL_USER" =~ ^[A-Za-z0-9_-]+$ ]] || {
+            echo "::error::Set GHCR_PULL_USER to the account owning GHCR_PULL_TOKEN." >&2
+            exit 1
+          }
           (( ${#HUA_DELIVERY_SECRET} >= 32 )) || {
             echo "::error::HUA_DELIVERY_SECRET must be at least 32 characters." >&2
             exit 1
@@ -68,7 +74,7 @@ jobs:
           IMAGE: ghcr.io/0x0sky/h-ua-bot:${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+          printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io --username "$GHCR_PULL_USER" --password-stdin >/dev/null
           docker buildx imagetools inspect "$IMAGE" >/dev/null || {
             echo "::error::Master image is not published. Wait for Image workflow." >&2
             exit 1
@@ -93,8 +99,8 @@ jobs:
             printf 'HUA_TELEGRAM_TOKEN=%s\n' "$HUA_TELEGRAM_TOKEN"
             printf 'HUA_HUB_TOKEN=%s\n' "$HUA_HUB_TOKEN"
             printf 'HUA_DELIVERY_SECRET=%s\n' "$HUA_DELIVERY_SECRET"
-            printf 'GHCR_PULL_USER=%s\n' "$GITHUB_ACTOR"
-            printf 'GHCR_PULL_TOKEN=%s\n' "$REGISTRY_TOKEN"
+            printf 'GHCR_PULL_USER=%s\n' "$GHCR_PULL_USER"
+            printf 'GHCR_PULL_TOKEN=%s\n' "$GHCR_PULL_TOKEN"
           } > "$RUNNER_TEMP/hua-source.env"
           age --armor --recipient "$INFRA_AGE_RECIPIENT" \
             --output "$RUNNER_TEMP/hua-secrets.age" "$RUNNER_TEMP/hua-source.env"
