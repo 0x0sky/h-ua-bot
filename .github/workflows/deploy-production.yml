@@ -92,13 +92,32 @@ jobs:
           umask 077
           recipient_dir="$RUNNER_TEMP/infra-recipient"
           mkdir -p "$recipient_dir"
+
+          # Fail with a precise error instead of an ambiguous GitHub API 404.
+          # Both checks use only INFRA_DEPLOY_TOKEN, never the producer GITHUB_TOKEN.
+          if ! gh api --silent "repos/${INFRA_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::INFRA_DEPLOY_TOKEN cannot access private repository ${INFRA_REPOSITORY}. Grant this token access to the infra repository (and approve it for the organization if required)." >&2
+            exit 1
+          fi
+          if ! gh api --silent "repos/${INFRA_REPOSITORY}/contents/.github/workflows/issue-workload-recipient.yml?ref=master" >/dev/null 2>&1; then
+            echo "::error::Infra recipient workflow is absent or unreadable on infra/master. Merge aiaiaiai-org/infra#47 before attempting this handoff; ensure token Contents: read." >&2
+            exit 1
+          fi
+          if ! gh api --silent "repos/${INFRA_REPOSITORY}/actions/workflows/issue-workload-recipient.yml" >/dev/null 2>&1; then
+            echo "::error::INFRA_DEPLOY_TOKEN cannot read the infra recipient workflow. Grant Actions: read and verify the workflow is active." >&2
+            exit 1
+          fi
+
           jq -n --arg workload h-ua-bot --arg request_id "$REQUEST_ID" \
             '{event_type: "issue-workload-recipient", client_payload: {
               workload: $workload, request_id: $request_id
             }}' > "$RUNNER_TEMP/recipient-request.json"
           trap 'rm -f "$RUNNER_TEMP/recipient-request.json"' EXIT
-          gh api --method POST "repos/${INFRA_REPOSITORY}/dispatches" \
-            --input "$RUNNER_TEMP/recipient-request.json"
+          if ! gh api --method POST "repos/${INFRA_REPOSITORY}/dispatches" \
+            --input "$RUNNER_TEMP/recipient-request.json"; then
+            echo "::error::Unable to dispatch the infra recipient request. INFRA_DEPLOY_TOKEN requires Contents: write for ${INFRA_REPOSITORY}; confirm organization token approval." >&2
+            exit 1
+          fi
 
           # The producer run ID uniquely correlates a request and its public artifact.
           recipient_run=""
