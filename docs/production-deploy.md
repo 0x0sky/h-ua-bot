@@ -4,6 +4,25 @@ This repository owns the Telegram bot and its runtime credentials. The
 `aiaiaiai-org/infra` repository owns the host, SSH, routing and activation.
 Deploy is **manual** and does not run on PR merge.
 
+## Four Telegram sources
+
+The production deployment profile uses `vanek_nikolaev,kpszsu,war_monitor,monitorwarr`.
+The collector list is owned by `aiaiaiai-org/infra` in
+`contracts/services/prism-hub.yaml` (`PRISM_SIGNAL_TELEGRAM_CHANNELS`).
+The bot's `HUA_SOURCES` controls display only.
+
+Roll out the matching infra contract to Prism Hub first. Check the signal
+scheduler's collection results/cursors for each channel; HTTP health alone
+does not prove collection. Then deploy the bot and check /start and /status.
+An existing production `HUA_SOURCES` Variable overrides the workflow default:
+set it to the same four-channel list or remove the override before bot deployment.
+Do not set `PRISM_SIGNAL_SOURCES_JSON` alongside the comma-separated Hub setting.
+
+Keep the previous source list for rollback. If collection must return to one
+channel, restore the bot display to `vanek_nikolaev` and restore the Hub contract
+to the same list in the coordinated rollback. No source history or cursor needs
+to be deleted. Merging these changes does not activate them.
+
 ## Initial setup
 
 In **0x0sky/h-ua-bot → Settings → Environments → production** configure:
@@ -17,7 +36,7 @@ In **0x0sky/h-ua-bot → Settings → Environments → production** configure:
 | Variable | `HUA_HUB_ORIGIN` | Optional; defaults to `https://api.aiaiaiai.org/prism-hub` |
 | Variable | `HUA_HUB_PROVIDER_SCOPE` | Optional; defaults to `h-ua-bot` |
 | Variable | `HUA_ALERT_CHANNEL` | Optional; defaults to `alerts` |
-| Variable | `HUA_SOURCES` | Optional; defaults to `vanek_nikolaev` |
+| Variable | `HUA_SOURCES` | Optional; deployment defaults to `vanek_nikolaev,kpszsu,war_monitor,monitorwarr` |
 
 Neither `INFRA_AGE_RECIPIENT` nor `GHCR_PULL_TOKEN`/`GHCR_PULL_USER` nor
 SSH/VPS configuration belongs in this repository. Infra owns its private SSH

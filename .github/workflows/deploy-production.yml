@@ -34,7 +34,7 @@ jobs:
       HUA_HUB_ORIGIN: ${{ vars.HUA_HUB_ORIGIN || 'https://api.aiaiaiai.org/prism-hub' }}
       HUA_HUB_PROVIDER_SCOPE: ${{ vars.HUA_HUB_PROVIDER_SCOPE || 'h-ua-bot' }}
       HUA_ALERT_CHANNEL: ${{ vars.HUA_ALERT_CHANNEL || 'alerts' }}
-      HUA_SOURCES: ${{ vars.HUA_SOURCES || 'vanek_nikolaev' }}
+      HUA_SOURCES: ${{ vars.HUA_SOURCES || 'vanek_nikolaev,kpszsu,war_monitor,monitorwarr' }}
       INFRA_DEPLOY_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
     steps:
       - name: Validate release and deployment credentials
