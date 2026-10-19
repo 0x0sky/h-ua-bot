@@ -3,7 +3,7 @@
 #
 # Only an explicit manual action requests deployment. Secret values never enter
 # repository_dispatch plaintext; infra decrypts them with its SSH identity.
-# Registry access uses a separately scoped credential that outlives dispatch.
+# Registry credentials are owned by infra and never forwarded by the producer.
 name: Deploy production
 
 on:
@@ -21,7 +21,7 @@ jobs:
   request:
     name: Request encrypted infra deployment
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment:
       name: production
     env:
@@ -31,10 +31,7 @@ jobs:
       HUA_TELEGRAM_TOKEN: ${{ secrets.HUA_TELEGRAM_TOKEN }}
       HUA_HUB_TOKEN: ${{ secrets.HUA_HUB_TOKEN }}
       HUA_DELIVERY_SECRET: ${{ secrets.HUA_DELIVERY_SECRET }}
-      INFRA_AGE_RECIPIENT: ${{ vars.INFRA_AGE_RECIPIENT }}
       INFRA_DEPLOY_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
-      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
-      GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
     steps:
       - name: Validate release and deployment credentials
         shell: bash
@@ -45,11 +42,7 @@ jobs:
             exit 1
           }
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$INFRA_AGE_RECIPIENT" == ssh-ed25519\ * || "$INFRA_AGE_RECIPIENT" == ssh-rsa\ * ]] || {
-            echo "::error::Set the infra target's public SSH key as production Variable INFRA_AGE_RECIPIENT." >&2
-            exit 1
-          }
-          for name in HUA_TELEGRAM_TOKEN HUA_HUB_TOKEN HUA_DELIVERY_SECRET INFRA_DEPLOY_TOKEN GHCR_PULL_TOKEN; do
+          for name in HUA_TELEGRAM_TOKEN HUA_HUB_TOKEN HUA_DELIVERY_SECRET INFRA_DEPLOY_TOKEN; do
             test -n "${!name:-}" || {
               echo "::error::Production credential $name is missing." >&2
               exit 1
@@ -59,10 +52,6 @@ jobs:
               exit 1
             }
           done
-          [[ "$GHCR_PULL_USER" =~ ^[A-Za-z0-9_-]+$ ]] || {
-            echo "::error::Set GHCR_PULL_USER to the account owning GHCR_PULL_TOKEN." >&2
-            exit 1
-          }
           (( ${#HUA_DELIVERY_SECRET} >= 32 )) || {
             echo "::error::HUA_DELIVERY_SECRET must be at least 32 characters." >&2
             exit 1
@@ -72,19 +61,76 @@ jobs:
         shell: bash
         env:
           IMAGE: ghcr.io/0x0sky/h-ua-bot:${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io --username "$GHCR_PULL_USER" --password-stdin >/dev/null
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
           docker buildx imagetools inspect "$IMAGE" >/dev/null || {
             echo "::error::Master image is not published. Wait for Image workflow." >&2
             exit 1
           }
           docker logout ghcr.io >/dev/null
 
+      - name: Fetch infra-owned encryption recipient
+        id: recipient
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
+          REQUEST_ID: ${{ github.run_id }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          recipient_dir="$RUNNER_TEMP/infra-recipient"
+          mkdir -p "$recipient_dir"
+          jq -n --arg workload h-ua-bot --arg request_id "$REQUEST_ID" \
+            '{event_type: "issue-workload-recipient", client_payload: {
+              workload: $workload, request_id: $request_id
+            }}' > "$RUNNER_TEMP/recipient-request.json"
+          trap 'rm -f "$RUNNER_TEMP/recipient-request.json"' EXIT
+          gh api --method POST "repos/${INFRA_REPOSITORY}/dispatches" \
+            --input "$RUNNER_TEMP/recipient-request.json"
+
+          # The producer run ID uniquely correlates a request and its public artifact.
+          recipient_run=""
+          for attempt in $(seq 1 180); do
+            runs="$(gh api "repos/${INFRA_REPOSITORY}/actions/workflows/issue-workload-recipient.yml/runs?event=repository_dispatch&per_page=50")"
+            recipient_run="$(jq -c --arg title "Recipient h-ua-bot / ${REQUEST_ID}" \
+              '[.workflow_runs[] | select(.display_title == $title and .event == "repository_dispatch" and .head_branch == "master")][0] // empty' <<< "$runs")"
+            if [[ -n "$recipient_run" ]]; then
+              status="$(jq -r '.status' <<< "$recipient_run")"
+              if [[ "$status" == completed ]]; then
+                conclusion="$(jq -r '.conclusion' <<< "$recipient_run")"
+                if [[ "$conclusion" != success ]]; then
+                  echo "::error::Infra recipient run failed: $(jq -r '.html_url' <<< "$recipient_run")" >&2
+                  exit 1
+                fi
+                break
+              fi
+            fi
+            sleep 5
+          done
+          [[ -n "$recipient_run" && "$(jq -r '.status' <<< "$recipient_run")" == completed ]] || {
+            echo "::error::Timed out waiting for the correlated infra recipient run." >&2
+            exit 1
+          }
+          run_id="$(jq -r '.id' <<< "$recipient_run")"
+          gh run download "$run_id" --repo "$INFRA_REPOSITORY" \
+            --name "recipient-h-ua-bot-$REQUEST_ID" --dir "$recipient_dir"
+          test -s "$recipient_dir/recipient.pub"
+          [[ "$(wc -l < "$recipient_dir/recipient.pub")" -eq 1 ]]
+          ssh-keygen -lf "$recipient_dir/recipient.pub" >/dev/null
+          recipient="$(cat "$recipient_dir/recipient.pub")"
+          [[ "$recipient" =~ ^ssh-(ed25519|rsa)\ [A-Za-z0-9+/=]+([[:space:]].*)?$ ]] || {
+            echo "::error::Infra supplied an invalid public encryption recipient." >&2
+            exit 1
+          }
+          printf 'key=%s\n' "$recipient" >> "$GITHUB_OUTPUT"
+
       - name: Encrypt and dispatch scoped runtime credentials
         shell: bash
         env:
           IMAGE: ghcr.io/0x0sky/h-ua-bot:${{ github.sha }}
+          INFRA_AGE_RECIPIENT: ${{ steps.recipient.outputs.key }}
           GH_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
         run: |
           set -Eeuo pipefail
@@ -99,8 +145,6 @@ jobs:
             printf 'HUA_TELEGRAM_TOKEN=%s\n' "$HUA_TELEGRAM_TOKEN"
             printf 'HUA_HUB_TOKEN=%s\n' "$HUA_HUB_TOKEN"
             printf 'HUA_DELIVERY_SECRET=%s\n' "$HUA_DELIVERY_SECRET"
-            printf 'GHCR_PULL_USER=%s\n' "$GHCR_PULL_USER"
-            printf 'GHCR_PULL_TOKEN=%s\n' "$GHCR_PULL_TOKEN"
           } > "$RUNNER_TEMP/hua-source.env"
           age --armor --recipient "$INFRA_AGE_RECIPIENT" \
             --output "$RUNNER_TEMP/hua-secrets.age" "$RUNNER_TEMP/hua-source.env"
