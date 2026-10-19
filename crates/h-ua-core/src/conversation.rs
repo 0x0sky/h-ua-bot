@@ -80,7 +80,11 @@ impl<'a> Conversation<'a> {
         let sources = if self.sources.is_empty() {
             "підключені джерела".to_owned()
         } else {
-            self.sources.iter().map(|s| s.label.as_str()).collect::<Vec<_>>().join(", ")
+            self.sources
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         Message::asking_location(format!(
             "Я повідомляю про повітряні загрози біля вас: дрони, КАБи, ракети. Лише про ті, що стосуються вашого місця.\n\n\
@@ -208,7 +212,11 @@ impl<'a> Conversation<'a> {
         let sources = if self.sources.is_empty() {
             "—".to_owned()
         } else {
-            self.sources.iter().map(|s| s.label.as_str()).collect::<Vec<_>>().join(", ")
+            self.sources
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         Ok(vec![Message::text(format!(
             "Позиція: {}\nВиди: {}\nЗагрози поруч: {}\nДжерела: {sources}\n\n{NOT_OFFICIAL}",

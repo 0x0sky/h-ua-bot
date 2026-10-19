@@ -92,8 +92,9 @@ impl Config {
                     "set either HUA_SOURCES_JSON or HUA_SOURCES, not both".to_owned(),
                 ));
             }
-            let sources: Vec<Source> = serde_json::from_str(&catalog)
-                .map_err(|_| ConfigError("HUA_SOURCES_JSON must be an array of source descriptors".to_owned()))?;
+            let sources: Vec<Source> = serde_json::from_str(&catalog).map_err(|_| {
+                ConfigError("HUA_SOURCES_JSON must be an array of source descriptors".to_owned())
+            })?;
             sources
         } else {
             let sources_text = get("HUA_SOURCES").unwrap_or_else(|| "vanek_nikolaev".to_owned());
@@ -113,7 +114,9 @@ impl Config {
                 .collect::<Result<Vec<_>, _>>()?
         };
         if sources.is_empty() || sources.len() > 32 {
-            return Err(ConfigError("source catalog must have 1 to 32 entries".to_owned()));
+            return Err(ConfigError(
+                "source catalog must have 1 to 32 entries".to_owned(),
+            ));
         }
         let mut source_ids = HashSet::new();
         for source in &sources {
@@ -131,7 +134,9 @@ impl Config {
                 || source.label.chars().any(char::is_control)
                 || !source_ids.insert(&source.id)
             {
-                return Err(ConfigError("source catalog has invalid or duplicate source metadata".to_owned()));
+                return Err(ConfigError(
+                    "source catalog has invalid or duplicate source metadata".to_owned(),
+                ));
             }
         }
 
@@ -208,7 +213,13 @@ mod tests {
     #[test]
     fn several_channels_are_listed_with_or_without_an_at_sign() {
         let c = config(&[("HUA_SOURCES", "vanek_nikolaev, @other_channel ,")]).unwrap();
-        assert_eq!(c.sources, [Source::telegram_channel("vanek_nikolaev"), Source::telegram_channel("other_channel")]);
+        assert_eq!(
+            c.sources,
+            [
+                Source::telegram_channel("vanek_nikolaev"),
+                Source::telegram_channel("other_channel")
+            ]
+        );
     }
 
     #[test]
@@ -242,18 +253,27 @@ mod tests {
     fn structured_catalog_rejects_duplicates_invalid_names_and_legacy_conflicts() {
         let invalid = [
             r#"[{"id":"api:alarm","kind":"api","label":"Air"},{"id":"api:alarm","kind":"api","label":"Again"}]"#,
-            r#"[{"id":"api:alarm","kind":"api","label":"Name\\nInjected"}]"#,
+            r#"[{"id":"api:alarm","kind":"api","label":"Name\nInjected"}]"#,
             r#"[{"id":"API:alarm","kind":"api","label":"Wrong ID"}]"#,
             r#"[{"id":"api:alarm","kind":"unknown","label":"Unknown"}]"#,
             r#"[]"#,
         ];
         for catalog in invalid {
-            assert!(config(&[("HUA_SOURCES_JSON", catalog)]).is_err(), "{catalog}");
+            assert!(
+                config(&[("HUA_SOURCES_JSON", catalog)]).is_err(),
+                "{catalog}"
+            );
         }
-        assert!(config(&[
-            ("HUA_SOURCES", "vanek_nikolaev"),
-            ("HUA_SOURCES_JSON", r#"[{"id":"api:a","kind":"api","label":"API"}]"#),
-        ]).is_err());
+        assert!(
+            config(&[
+                ("HUA_SOURCES", "vanek_nikolaev"),
+                (
+                    "HUA_SOURCES_JSON",
+                    r#"[{"id":"api:a","kind":"api","label":"API"}]"#
+                ),
+            ])
+            .is_err()
+        );
     }
 
     #[test]

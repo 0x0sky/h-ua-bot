@@ -27,7 +27,9 @@ Its public `Source` descriptors (`id`, `kind`, `label`) are presentation metadat
 channels, while legacy `HUA_SOURCES` continues to work. Neither setting provisions collection.
 Only list activated upstreams; source provenance, authority, deduplication, and retraction
 remain owned by Prism Hub and `prism-signal`. The client must not infer an all-clear from
-the absence of reports, including API timeouts or stale feeds. Two things flow through it:
+the absence of reports, including API timeouts or stale feeds.
+
+Two things flow through the bot:
 
 - **What a person says** (a command, a position) is answered by the `Conversation` and, when it
   changes what they asked for, saved to the hub as a subscription.
