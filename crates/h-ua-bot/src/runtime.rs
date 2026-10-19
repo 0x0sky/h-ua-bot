@@ -9,6 +9,7 @@ use std::time::Duration;
 use h_ua_core::conversation::Conversation;
 use h_ua_core::message::Message;
 use h_ua_core::ports::{EventKind, Messenger, Subscriptions};
+use h_ua_core::source::Source;
 use h_ua_hub::{HubClient, HubConfig, HubSubscriptions};
 use h_ua_telegram::{CLIENT_NAME, ReqwestTransport, TelegramClient};
 use prism_signal_normalize::Gazetteer;
@@ -80,7 +81,7 @@ async fn client_loop(
     messenger: Arc<dyn Messenger>,
     subscriptions: Arc<dyn Subscriptions>,
     gazetteer: Arc<Gazetteer>,
-    labels: Vec<String>,
+    sources: Vec<Source>,
 ) {
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -89,7 +90,7 @@ async fn client_loop(
                 backoff = Duration::from_secs(1);
                 for event in events {
                     let live = matches!(event.kind, EventKind::Location { live: true, .. });
-                    let replies = Conversation::new(&*subscriptions, &gazetteer, labels.clone())
+                    let replies = Conversation::new(&*subscriptions, &gazetteer, sources.clone())
                         .handle(&event)
                         .await;
                     let replies = match replies {

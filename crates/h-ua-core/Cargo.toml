@@ -19,7 +19,9 @@ workspace = true
 async-trait.workspace = true
 h3o.workspace = true
 prism-signal-normalize.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tokio.workspace = true

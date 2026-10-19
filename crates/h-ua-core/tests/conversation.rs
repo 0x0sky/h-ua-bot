@@ -8,6 +8,7 @@ use h_ua_core::conversation::Conversation;
 use h_ua_core::memory::MemorySubscriptions;
 use h_ua_core::message::Message;
 use h_ua_core::ports::{Event, EventKind, Subscriptions};
+use h_ua_core::source::Source;
 use h_ua_core::subscriber::{Recipient, Subscription};
 use prism_signal_normalize::Gazetteer;
 
@@ -49,7 +50,7 @@ impl Chat {
         Conversation::new(
             &self.subscriptions,
             &self.gazetteer,
-            vec!["@vanek_nikolaev".to_owned()],
+            vec![Source::telegram_channel("vanek_nikolaev")],
         )
         .handle(event)
         .await
@@ -68,7 +69,7 @@ async fn the_welcome_says_what_this_is_not_and_what_is_kept() {
         let replies = chat.say(&command(name, "")).await;
         assert_eq!(replies.len(), 1);
         let text = &replies[0].text;
-        assert!(text.contains("неофіційні"));
+        assert!(text.contains("неофіційний сервіс"));
         assert!(text.contains("Відсутність повідомлення не означає безпеку"));
         assert!(text.contains("не точні координати"));
         assert!(text.contains("ідентифікатор вашого чату"));
@@ -203,7 +204,7 @@ async fn status_reports_what_is_known_and_repeats_the_disclaimer() {
     let text = &chat.say(&command("status", "")).await[0].text;
     assert!(text.contains("Київ"));
     assert!(text.contains("Джерела: @vanek_nikolaev"));
-    assert!(text.contains("неофіційні"));
+    assert!(text.contains("неофіційний сервіс"));
 }
 
 #[tokio::test]

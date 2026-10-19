@@ -329,6 +329,8 @@ dependencies = [
  "async-trait",
  "h3o",
  "prism-signal-normalize",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
 ]

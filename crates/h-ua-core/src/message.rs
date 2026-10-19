@@ -34,7 +34,7 @@ impl Message {
 }
 
 /// The notice that must accompany every welcome: what this is and is not.
-pub const NOT_OFFICIAL: &str = "⚠️ Це неофіційні повідомлення з відкритих каналів. Відсутність повідомлення не означає безпеку. Орієнтуйтесь на офіційні сповіщення про повітряну тривогу.";
+pub const NOT_OFFICIAL: &str = "⚠️ Це неофіційний сервіс. Навіть коли джерело офіційне, повідомлення бота не замінюють офіційного оповіщення. Відсутність повідомлення не означає безпеку. Орієнтуйтесь на офіційні сповіщення про повітряну тривогу.";
 
 /// The privacy statement shown with the welcome.
 pub const PRIVACY: &str = "🔒 Позицію зберігаю лише як грубу клітинку близько 3 км, а не точні координати. Разом із нею зберігається технічний ідентифікатор вашого чату. /stop видаляє підписку й позицію.";
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn the_disclaimers_say_the_two_things_that_matter() {
-        assert!(NOT_OFFICIAL.contains("неофіційні"));
+        assert!(NOT_OFFICIAL.contains("неофіційний сервіс"));
         assert!(NOT_OFFICIAL.contains("не означає безпеку"));
         assert!(PRIVACY.contains("не точні координати"));
     }

@@ -16,4 +16,5 @@ pub mod geo;
 pub mod memory;
 pub mod message;
 pub mod ports;
+pub mod source;
 pub mod subscriber;
