@@ -1,0 +1,79 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: MIT
+
+name: Validate deploy contract
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/validate-deploy.yml'
+      - 'docs/production-deploy.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate encrypted handoff and manual activation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          file=.github/workflows/deploy-production.yml
+          validate_contract() {
+            local candidate="$1"
+            grep -Fq 'workflow_dispatch:' "$candidate" || return 1
+            if grep -Eq '^[[:space:]]+push:' "$candidate"; then
+              echo "::error::Automatic deployment on push is forbidden." >&2
+              return 1
+            fi
+            grep -Fq 'environment:' "$candidate" || return 1
+            grep -Fq 'name: production' "$candidate" || return 1
+            grep -Fq 'INFRA_AGE_RECIPIENT' "$candidate" || return 1
+            grep -Fq 'age --armor --recipient' "$candidate" || return 1
+            grep -Fq 'GHCR_PULL_TOKEN=' "$candidate" || return 1
+            grep -Fq 'GHCR_PULL_TOKEN: ' "$candidate" || return 1
+            grep -Fq 'GHCR_PULL_USER: ' "$candidate" || return 1
+            grep -Fq 'secrets_age: $envelope' "$candidate" || return 1
+            grep -Fq 'repos/${INFRA_REPOSITORY}/dispatches' "$candidate" || return 1
+            grep -Fq 'refs/heads/master' "$candidate" || return 1
+            if grep -Fq 'SSH_PRIVATE_KEY' "$candidate"; then
+              echo "::error::Private SSH keys must not be consumed by the producer." >&2
+              return 1
+            fi
+            if grep -Fq 'toJSON(secrets)' "$candidate"; then
+              echo "::error::All-secrets forwarding is forbidden." >&2
+              return 1
+            fi
+          }
+
+          validate_contract "$file"
+
+          # Mutation regression cases: each forbidden construct must fail.
+          fixtures="$(mktemp -d)"
+          trap 'rm -rf "$fixtures"' EXIT
+          cp "$file" "$fixtures/push.yml"
+          sed -i '/^on:$/a\  push:' "$fixtures/push.yml"
+          grep -Fq '  push:' "$fixtures/push.yml"
+          if validate_contract "$fixtures/push.yml"; then
+            echo "::error::Push trigger regression was accepted." >&2
+            exit 1
+          fi
+
+          cp "$file" "$fixtures/ssh.yml"
+          printf '%s\n' '      SSH_PRIVATE_KEY: forbidden' >> "$fixtures/ssh.yml"
+          if validate_contract "$fixtures/ssh.yml"; then
+            echo "::error::Private key regression was accepted." >&2
+            exit 1
+          fi
+
+          cp "$file" "$fixtures/secrets.yml"
+          printf '%s\n' '      forbidden: toJSON(secrets)' >> "$fixtures/secrets.yml"
+          if validate_contract "$fixtures/secrets.yml"; then
+            echo "::error::All-secrets regression was accepted." >&2
+            exit 1
+          fi
