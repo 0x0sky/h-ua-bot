@@ -39,6 +39,14 @@ jobs:
             grep -Fq 'HUA_TELEGRAM_TOKEN=%s' "$candidate" || return 1
             grep -Fq 'HUA_HUB_TOKEN=%s' "$candidate" || return 1
             grep -Fq 'HUA_DELIVERY_SECRET=%s' "$candidate" || return 1
+            grep -Fq 'vars.HUA_HUB_ORIGIN' "$candidate" || return 1
+            grep -Fq 'vars.HUA_HUB_PROVIDER_SCOPE' "$candidate" || return 1
+            grep -Fq 'vars.HUA_ALERT_CHANNEL' "$candidate" || return 1
+            grep -Fq 'vars.HUA_SOURCES' "$candidate" || return 1
+            grep -Fq 'HUA_HUB_ORIGIN=%s' "$candidate" || return 1
+            grep -Fq 'HUA_HUB_PROVIDER_SCOPE=%s' "$candidate" || return 1
+            grep -Fq 'HUA_ALERT_CHANNEL=%s' "$candidate" || return 1
+            grep -Fq 'HUA_SOURCES=%s' "$candidate" || return 1
             grep -Fq 'secrets_age: $envelope' "$candidate" || return 1
             grep -Fq 'repos/${INFRA_REPOSITORY}/dispatches' "$candidate" || return 1
             grep -Fq 'refs/heads/master' "$candidate" || return 1
