@@ -31,6 +31,10 @@ jobs:
       HUA_TELEGRAM_TOKEN: ${{ secrets.HUA_TELEGRAM_TOKEN }}
       HUA_HUB_TOKEN: ${{ secrets.HUA_HUB_TOKEN }}
       HUA_DELIVERY_SECRET: ${{ secrets.HUA_DELIVERY_SECRET }}
+      HUA_HUB_ORIGIN: ${{ vars.HUA_HUB_ORIGIN || 'https://api.aiaiaiai.org/prism-hub' }}
+      HUA_HUB_PROVIDER_SCOPE: ${{ vars.HUA_HUB_PROVIDER_SCOPE || 'h-ua-bot' }}
+      HUA_ALERT_CHANNEL: ${{ vars.HUA_ALERT_CHANNEL || 'alerts' }}
+      HUA_SOURCES: ${{ vars.HUA_SOURCES || 'vanek_nikolaev' }}
       INFRA_DEPLOY_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
     steps:
       - name: Validate release and deployment credentials
@@ -49,6 +53,12 @@ jobs:
             }
             [[ "${!name}" != *$'\n'* && "${!name}" != *$'\r'* ]] || {
               echo "::error::Production credential $name must be one line." >&2
+              exit 1
+            }
+          done
+          for name in HUA_HUB_ORIGIN HUA_HUB_PROVIDER_SCOPE HUA_ALERT_CHANNEL HUA_SOURCES; do
+            [[ "${!name}" =~ ^[A-Za-z0-9_./:@+,-]+$ ]] || {
+              echo "::error::Invalid producer variable $name." >&2
               exit 1
             }
           done
@@ -145,6 +155,10 @@ jobs:
             printf 'HUA_TELEGRAM_TOKEN=%s\n' "$HUA_TELEGRAM_TOKEN"
             printf 'HUA_HUB_TOKEN=%s\n' "$HUA_HUB_TOKEN"
             printf 'HUA_DELIVERY_SECRET=%s\n' "$HUA_DELIVERY_SECRET"
+            printf 'HUA_HUB_ORIGIN=%s\n' "$HUA_HUB_ORIGIN"
+            printf 'HUA_HUB_PROVIDER_SCOPE=%s\n' "$HUA_HUB_PROVIDER_SCOPE"
+            printf 'HUA_ALERT_CHANNEL=%s\n' "$HUA_ALERT_CHANNEL"
+            printf 'HUA_SOURCES=%s\n' "$HUA_SOURCES"
           } > "$RUNNER_TEMP/hua-source.env"
           age --armor --recipient "$INFRA_AGE_RECIPIENT" \
             --output "$RUNNER_TEMP/hua-secrets.age" "$RUNNER_TEMP/hua-source.env"
