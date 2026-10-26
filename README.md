@@ -7,9 +7,9 @@ which places are in danger, and messages you only when that includes yours. Dron
 bombs, and missiles, each on its own switch.
 
 ```text
-public channel ─▶ prism-hub ─────────────▶ Porter ─▶ this bot ─▶ Telegram ─▶ you
- (@vanek_nikolaev)  reads, judges (prism-signal),      delivers     ◀─ your position,
-                    matches your cell                               kinds, /stop
+four public channels ─▶ prism-hub ─▶ Porter ─▶ h-ua-bot ─▶ Telegram ─▶ you
+  (equal source status)    (Prism Signal     (renders    (sends)       ◀─ position,
+                            + subscriptions)  report)                 kinds, /stop
 ```
 
 **Not an official warning.** The sources are unofficial, human-run channels. Every alert says so,
@@ -24,8 +24,6 @@ From then on the hub sends, in words Porter writes:
 ```text
 ⚠️ БпЛА — Київ
 Що: ударні дрони
-Ймовірність: помірна
-
 Повідомляли (Telegram, за київським часом):
 • 14:57 — @vanek_nikolaev https://t.me/vanek_nikolaev/43220
 
@@ -35,9 +33,9 @@ From then on the hub sends, in words Porter writes:
 and, when the source calls a threat off (never on its own when a report merely lapses):
 
 ```text
-ℹ️ Джерело повідомило про відбій: БпЛА, Київ
-14:59 (за київським часом) джерело написало, що цю загрозу знято. https://t.me/vanek_nikolaev/43222
-Це не офіційний відбій.
+ℹ️ Джерела відкликали повідомлення: БпЛА, Київ
+14:59 (за київським часом) джерело відкликало своє повідомлення про загрозу. https://t.me/vanek_nikolaev/43222
+Це не офіційний відбій. Загрозу не можна вважати знятою лише за цим повідомленням.
 Ще діють повідомлення про цю загрозу: Бровари.
 
 Відсутність повідомлень не означає безпеки.
@@ -51,6 +49,19 @@ and, when the source calls a threat off (never on its own when a report merely l
 | `/nearby так` / `ні` | Also warn about threats passing near, not at, you |
 | `/status` | What the bot knows about you |
 | `/stop` | Delete your subscription and position |
+
+Four equal configured public Telegram sources are
+[@vanek_nikolaev](https://t.me/vanek_nikolaev),
+[@kpszsu](https://t.me/kpszsu),
+[@war_monitor](https://t.me/war_monitor) and
+[@monitorwarr](https://t.me/monitorwarr).
+Their names in the bot are a **display catalog**, not collector configuration:
+Prism Hub must independently poll the same channels, with the reviewed
+Prism Signal runtime pinned in its image. Multiple channels may repeat
+a single original post; the number of channels is not a probability.
+
+For a non-delivering production auth/routing test before any controlled
+live-chat verification, see [the deployment handshake](docs/production-deploy.md).
 
 ## Privacy
 
