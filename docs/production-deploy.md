@@ -23,6 +23,39 @@ channel, restore the bot display to `vanek_nikolaev` and restore the Hub contrac
 to the same list in the coordinated rollback. No source history or cursor needs
 to be deleted. Merging these changes does not activate them.
 
+## Non-delivering Hub ↔ bot handshake
+
+After a separately authorized Hub and bot deployment, verify routing and
+shared-secret parity **without sending a Telegram message**:
+
+```bash
+# Read the Hub runtime's PRISM_BOT_DELIVERY_SECRET securely; do not paste it in a
+# shell command line, CI log or issue comment.
+bash scripts/check-delivery-handshake.sh
+```
+
+The script reads `PRISM_BOT_DELIVERY_SECRET` from the environment, checks the
+public `/prism-hub/healthz` and `/hua-bot/health` routes, then sends
+`{}` to `/hua-bot/api/v1/delivery` with the Hub's secret. The bot must return
+HTTP `400` with `invalid_request` **after** authentication. HTTP `401`
+indicates that Hub and bot secrets do not match. The incomplete body has no
+chat, message or idempotency key, so **cannot trigger a Telegram send**.
+The script does not echo the secret; its temporary header file is private and
+removed on exit.
+
+The Hub secret `PRISM_BOT_DELIVERY_SECRET` (infra Environment) and bot secret
+`HUA_DELIVERY_SECRET` (bot production Environment, encrypted at handoff)
+**must contain exactly the same value**. There is no safe way to infer that
+from GitHub variable names or green CI.
+
+This only checks HTTP reachability and delivery authorization. It does
+**not** check the bot's scoped `HUA_HUB_TOKEN`, a running Prism Signal
+scheduler, per-channel cursors, subscription and binding state or actual
+Telegram delivery. After authorized activation, perform a controlled
+end-to-end test with a consenting test chat and examine Hub's
+`signal_source_cursors`, signal scheduler errors and delivery outbox. Do not
+fake threat notices in public channels or infer official safety status.
+
 ## Initial setup
 
 In **0x0sky/h-ua-bot → Settings → Environments → production** configure:
