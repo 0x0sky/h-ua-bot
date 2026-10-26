@@ -35,6 +35,9 @@ jobs:
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Validate non-delivering Hub/bot handshake
+        run: bash -n scripts/check-delivery-handshake.sh
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
