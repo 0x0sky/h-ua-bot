@@ -19,48 +19,7 @@ alerts remain the authority.
 ## What a person sees
 
 Send the bot `/start`, tap the location button, and it replies with the nearest place it knows.
-
-During an attack the chat holds **two messages**, not one per report:
-
-```text
-📡 Повідомлення джерел · з 03:27            ← the board: edited in place, never rings
-
-🔴 ☄️ балістика — Київ · 03:31 @vanek_nikolaev
-🔴 ✈️ реактивні шахеди — Київ · 03:29 @kpszsu
-🟡 🛵 шахеди — Бровари (поруч) · 03:20 @kpszsu
-
-✔️ Завершились: 2
-Оновлено 03:32
-```
-
-```text
-🔴 Загроза у вашій зоні                       ← the status: rings only when danger grows
-
-☄️ балістика
-✈️ реактивні шахеди — 3 повідомлення
-🟡 поруч: 🛵 шахеди
-
-Неофіційні джерела. Орієнтуйтеся на повітряну тривогу.
-```
-
-The status is sent anew, and the old one deleted, only when something comes closer (near → at
-your zone) or a new kind appears at the same distance. Everything else is a quiet edit. Reports
-that lapsed before they reached the bot are dropped, not replayed. When every report is called
-off or lapses, the board gets its final edit and a quiet status follows:
-
-```text
-⚪ Джерела затихли
-Активних повідомлень для вашої зони немає. Це не відбій: орієнтуйтеся на повітряну тривогу.
-
-📍 Ви досі там само? Позицію оновлено в суботу о 12:34 — /location
-```
-
-The last line appears only there, only when the position is over three days old, and at most once
-a day. The bot never says the sky is clear: silence from unofficial sources is not an all-clear.
-
-The board needs the hub to send the structured report next to the text (`signal`, see
-[the architecture](docs/architecture.md#receiving-deliveries)). Until it does, every report
-arrives as the text Porter wrote:
+From then on the hub sends, in words Porter writes:
 
 ```text
 ⚠️ БпЛА — Київ
@@ -69,6 +28,22 @@ arrives as the text Porter wrote:
 • 14:57 — @vanek_nikolaev https://t.me/vanek_nikolaev/43220
 
 Це неофіційне джерело, а не повітряна тривога. Стежте за офіційними оповіщеннями. Відсутність повідомлень не означає безпеки.
+```
+
+The hub can also ask the bot to keep one message current instead of adding a new one
+(`edit_message_id`), to remove superseded ones (`delete_message_ids`), and to deliver without a
+sound (`silent`), so an attack can be one board and one status rather than a message per report.
+What those messages say, and when they ring, is decided upstream; the bot only shows it.
+
+and, when the source calls a threat off (never on its own when a report merely lapses):
+
+```text
+ℹ️ Джерела відкликали повідомлення: БпЛА, Київ
+14:59 (за київським часом) джерело відкликало своє повідомлення про загрозу. https://t.me/vanek_nikolaev/43222
+Це не офіційний відбій. Загрозу не можна вважати знятою лише за цим повідомленням.
+Ще діють повідомлення про цю загрозу: Бровари.
+
+Відсутність повідомлень не означає безпеки.
 ```
 
 | Command | Does |

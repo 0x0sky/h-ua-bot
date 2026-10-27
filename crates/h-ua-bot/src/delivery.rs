@@ -7,13 +7,13 @@
 //! it checks the shared secret, sends, and answers in the shape the hub's delivery gateway reads.
 //! The text is never inspected or changed.
 //!
-//! A delivery may also carry `signal`, the structured report the text was written from. When it
-//! does and this bot can read it, the report goes onto the chat's live [board](crate::board)
-//! instead of becoming a message of its own. When it cannot, the text is sent as before.
+//! The bot is a view: what to show and when to ring are the hub's to decide. So a delivery may
+//! also say to replace a message sent earlier instead of sending a new one (`edit_message_id`),
+//! to remove messages it supersedes (`delete_message_ids`), and to arrive without a sound
+//! (`silent`). The hub keeps the message ids from the answers; the bot keeps none.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::Router;
@@ -29,8 +29,6 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::board::{Boards, signal_update};
-
 /// Header carrying the shared secret.
 pub const SECRET_HEADER: &str = "x-prism-bot-delivery-secret";
 
@@ -39,6 +37,9 @@ pub const TEXT_MAX_CHARS: usize = 4096;
 
 /// Largest request body, in bytes. A message is at most 4096 characters.
 const BODY_LIMIT: usize = 64 * 1024;
+
+/// Most messages one delivery may remove.
+const DELETE_MAX: usize = 10;
 
 /// How many delivered keys are remembered.
 const REMEMBERED: usize = 10_000;
@@ -88,7 +89,6 @@ impl<T: Transport> Deliver for TelegramClient<T> {
 pub struct DeliveryState {
     secret: String,
     sender: Arc<dyn Deliver>,
-    boards: Arc<Boards>,
     seen: Mutex<Seen>,
 }
 
@@ -112,17 +112,11 @@ impl Seen {
 }
 
 impl DeliveryState {
-    /// State for an endpoint that sends through `sender`, keeps live boards in `boards`, and
-    /// accepts only `secret`.
-    pub fn new(
-        secret: impl Into<String>,
-        sender: Arc<dyn Deliver>,
-        boards: Arc<Boards>,
-    ) -> Arc<Self> {
+    /// State for an endpoint that sends through `sender` and accepts only `secret`.
+    pub fn new(secret: impl Into<String>, sender: Arc<dyn Deliver>) -> Arc<Self> {
         Arc::new(Self {
             secret: secret.into(),
             sender,
-            boards,
             seen: Mutex::new(Seen::default()),
         })
     }
@@ -151,10 +145,15 @@ struct Request {
     message_thread_id: Option<i64>,
     text: String,
     idempotency_key: String,
-    /// The `prism-hub.signal-alert.v1` report the text was written from, with its
-    /// `assessment_id`.
+    /// Replace this message, sent earlier to the same chat, instead of sending a new one.
     #[serde(default)]
-    signal: Option<Value>,
+    edit_message_id: Option<i64>,
+    /// Remove these messages, sent earlier to the same chat, once the text is shown.
+    #[serde(default)]
+    delete_message_ids: Vec<i64>,
+    /// Arrive without a sound.
+    #[serde(default)]
+    silent: bool,
 }
 
 fn failure(status: StatusCode, code: &str) -> Response {
@@ -200,7 +199,10 @@ async fn delivery(
         && text_length <= TEXT_MAX_CHARS
         && !request.idempotency_key.is_empty()
         && request.idempotency_key.len() <= 200
-        && request.message_thread_id.is_none_or(|thread| thread > 0);
+        && request.message_thread_id.is_none_or(|thread| thread > 0)
+        && request.edit_message_id.is_none_or(|id| id > 0)
+        && request.delete_message_ids.len() <= DELETE_MAX
+        && request.delete_message_ids.iter().all(|id| *id > 0);
     if !usable {
         return failure(StatusCode::BAD_REQUEST, "invalid_request");
     }
@@ -211,41 +213,15 @@ async fn delivery(
     if let Some(id) = seen.ids.get(&request.idempotency_key) {
         return accepted(&request.idempotency_key, *id);
     }
-    let update = request.signal.as_ref().and_then(|signal| {
-        let update = signal_update(signal);
-        if update.is_none() {
-            warn!("a structured report could not be read; its text is sent instead");
-        }
-        update
-    });
-    let outcome = match update {
-        // Nothing shown, such as a report that lapsed on the way, is still handled: `0` says
-        // that no message carries it.
-        Some(update) => state
-            .boards
-            .apply(
-                &*state.sender,
-                request.chat_id,
-                request.message_thread_id,
-                update,
-                unix_now(),
-            )
-            .await
-            .map(|id| id.unwrap_or(0)),
-        None => {
-            state
-                .sender
-                .post(
-                    request.chat_id,
-                    request.message_thread_id,
-                    &request.text,
-                    false,
-                )
-                .await
-        }
-    };
-    match outcome {
+    match show(&*state.sender, &request).await {
         Ok(id) => {
+            for old in request.delete_message_ids.iter().filter(|old| **old != id) {
+                // Telegram refuses after 48 hours, or when the person already deleted it. A
+                // message that stays is no reason to show the text twice.
+                if let Err(error) = state.sender.delete(request.chat_id, *old).await {
+                    warn!(%error, "a superseded message was not deleted");
+                }
+            }
             seen.remember(request.idempotency_key.clone(), id);
             accepted(&request.idempotency_key, id)
         }
@@ -267,13 +243,22 @@ async fn delivery(
     }
 }
 
-/// Seconds since the Unix epoch.
-pub fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
-        })
+/// Shows the text, by an edit when asked and possible, and returns the id of the message that
+/// carries it.
+async fn show(sender: &dyn Deliver, request: &Request) -> Result<i64, SendError> {
+    let (chat, thread, text) = (request.chat_id, request.message_thread_id, &request.text);
+    if let Some(id) = request.edit_message_id {
+        match sender.edit(chat, id, text).await {
+            Ok(()) => return Ok(id),
+            // Gone, deleted by the person, or otherwise not editable: the text is sent anew and
+            // the answer carries the new id.
+            Err(SendError::Rejected(reason)) => {
+                warn!(%reason, "a message could not be edited; sending it anew");
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    sender.post(chat, thread, text, request.silent).await
 }
 
 fn accepted(key: &str, message_id: i64) -> Response {

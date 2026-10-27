@@ -8,19 +8,15 @@ use std::time::Duration;
 
 use h_ua_core::conversation::Conversation;
 use h_ua_core::message::Message;
-use h_ua_core::ports::{Event, EventKind, Messenger, Subscriptions};
+use h_ua_core::ports::{EventKind, Messenger, Subscriptions};
 use h_ua_core::source::Source;
 use h_ua_hub::{HubClient, HubConfig, HubSubscriptions};
 use h_ua_telegram::{CLIENT_NAME, ReqwestTransport, TelegramClient};
 use prism_signal_normalize::Gazetteer;
 use tracing::{error, info, warn};
 
-use crate::board::Boards;
 use crate::config::Config;
-use crate::delivery::{self, Deliver, DeliveryState, unix_now};
-
-/// How often lapsed reports are taken off the boards.
-const TICK: Duration = Duration::from_secs(30);
+use crate::delivery::{self, DeliveryState};
 
 /// Said when the hub could not be reached, so nobody believes a choice was saved when it was not.
 const NOT_SAVED: &str = "Не вдалося звʼязатися зі службою підписок. Нічого не збережено — спробуйте ще раз трохи згодом.";
@@ -59,9 +55,7 @@ pub async fn run(config: Config) -> Result<(), String> {
         .await
         .map_err(|e| format!("cannot listen on {}: {e}", config.delivery_listen))?;
     info!(address = %config.delivery_listen, "hub deliveries are accepted");
-    let boards = Arc::new(Boards::new());
-    let sender: Arc<dyn Deliver> = telegram;
-    let app = delivery::router(DeliveryState::new(secret, sender.clone(), boards.clone()));
+    let app = delivery::router(DeliveryState::new(secret, telegram));
 
     let mut tasks = tokio::task::JoinSet::new();
     tasks.spawn(client_loop(
@@ -69,15 +63,7 @@ pub async fn run(config: Config) -> Result<(), String> {
         subscriptions,
         gazetteer,
         config.sources.clone(),
-        boards.clone(),
     ));
-    tasks.spawn(async move {
-        let mut every = tokio::time::interval(TICK);
-        loop {
-            every.tick().await;
-            boards.tick(&*sender, unix_now()).await;
-        }
-    });
     tasks.spawn(async move {
         if let Err(error) = axum::serve(listener, app).await {
             error!(%error, "the delivery endpoint stopped");
@@ -91,25 +77,11 @@ pub async fn run(config: Config) -> Result<(), String> {
     Ok(())
 }
 
-/// What the boards need to know from the conversation: when a position was last shared, and
-/// that a person left.
-async fn remember(boards: &Boards, event: &Event) {
-    let Ok(chat_id) = event.from.address.parse::<i64>() else {
-        return;
-    };
-    match &event.kind {
-        EventKind::Location { .. } => boards.positioned(chat_id, unix_now()).await,
-        EventKind::Command { name, .. } if name == "stop" => boards.forget(chat_id).await,
-        _ => {}
-    }
-}
-
 async fn client_loop(
     messenger: Arc<dyn Messenger>,
     subscriptions: Arc<dyn Subscriptions>,
     gazetteer: Arc<Gazetteer>,
     sources: Vec<Source>,
-    boards: Arc<Boards>,
 ) {
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -122,10 +94,7 @@ async fn client_loop(
                         .handle(&event)
                         .await;
                     let replies = match replies {
-                        Ok(replies) => {
-                            remember(&boards, &event).await;
-                            replies
-                        }
+                        Ok(replies) => replies,
                         Err(error) => {
                             warn!(%error, "cannot handle an event");
                             // A live position updates in silence, and a failed update is

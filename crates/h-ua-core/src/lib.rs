@@ -10,7 +10,6 @@
 //! What a person gives is a position, and it is kept as a coarse [`Cell`](geo::Cell), never as
 //! coordinates.
 
-pub mod board;
 pub mod category;
 pub mod conversation;
 pub mod geo;
