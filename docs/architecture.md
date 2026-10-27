@@ -78,6 +78,16 @@ the text, and an idempotency key, with the shared secret in `X-Prism-Bot-Deliver
 - The secret is compared in time that does not depend on where it differs. Without it nothing is
   sent.
 - The text is sent as it is, at most 4096 characters. It is never inspected or changed.
+- The bot is a view. Three optional fields let the hub keep a message current instead of adding
+  one per change; what to show and when to ring stay the hub's decision, and the hub keeps the
+  message ids from the answers:
+  - `edit_message_id` replaces that message's text. If Telegram can no longer edit it (deleted,
+    gone), the text is sent anew and the answer carries the new id. Any other failure is
+    answered as usual, so the hub retries the edit rather than getting a duplicate.
+  - `delete_message_ids` (at most 10) removes superseded messages once the text is shown. This
+    is best effort: Telegram refuses after 48 hours, and a message that stays fails nothing. The
+    message carrying the text is never deleted.
+  - `silent` sends without a sound.
 - A key already delivered gets the first answer and sends nothing again. This is kept in memory,
   so a restart forgets it: a hub retry that crosses a restart can send a message twice.
 - Telegram's refusals map to what the hub does with them. A blocked chat or a rejected message is

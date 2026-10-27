@@ -6,6 +6,11 @@
 //! The hub decides whom to tell and Porter writes the text. This only puts it in the right chat:
 //! it checks the shared secret, sends, and answers in the shape the hub's delivery gateway reads.
 //! The text is never inspected or changed.
+//!
+//! The bot is a view: what to show and when to ring are the hub's to decide. So a delivery may
+//! also say to replace a message sent earlier instead of sending a new one (`edit_message_id`),
+//! to remove messages it supersedes (`delete_message_ids`), and to arrive without a sound
+//! (`silent`). The hub keeps the message ids from the answers; the bot keeps none.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -33,30 +38,50 @@ pub const TEXT_MAX_CHARS: usize = 4096;
 /// Largest request body, in bytes. A message is at most 4096 characters.
 const BODY_LIMIT: usize = 64 * 1024;
 
+/// Most messages one delivery may remove.
+const DELETE_MAX: usize = 10;
+
 /// How many delivered keys are remembered.
 const REMEMBERED: usize = 10_000;
 
-/// Something that can put text in a chat.
+/// Something that can put text in a chat and keep it current.
 #[async_trait]
 pub trait Deliver: Send + Sync {
     /// Sends `text` to a chat, and to a topic in it when given, and returns Telegram's message id.
-    async fn deliver(
+    /// A `silent` message arrives without a sound.
+    async fn post(
         &self,
         chat_id: i64,
         thread_id: Option<i64>,
         text: &str,
+        silent: bool,
     ) -> Result<i64, SendError>;
+
+    /// Replaces the text of a message sent earlier.
+    async fn edit(&self, chat_id: i64, message_id: i64, text: &str) -> Result<(), SendError>;
+
+    /// Deletes a message sent earlier.
+    async fn delete(&self, chat_id: i64, message_id: i64) -> Result<(), SendError>;
 }
 
 #[async_trait]
 impl<T: Transport> Deliver for TelegramClient<T> {
-    async fn deliver(
+    async fn post(
         &self,
         chat_id: i64,
         thread_id: Option<i64>,
         text: &str,
+        silent: bool,
     ) -> Result<i64, SendError> {
-        TelegramClient::deliver(self, chat_id, thread_id, text).await
+        TelegramClient::post(self, chat_id, thread_id, text, silent).await
+    }
+
+    async fn edit(&self, chat_id: i64, message_id: i64, text: &str) -> Result<(), SendError> {
+        TelegramClient::edit(self, chat_id, message_id, text).await
+    }
+
+    async fn delete(&self, chat_id: i64, message_id: i64) -> Result<(), SendError> {
+        TelegramClient::delete(self, chat_id, message_id).await
     }
 }
 
@@ -120,6 +145,15 @@ struct Request {
     message_thread_id: Option<i64>,
     text: String,
     idempotency_key: String,
+    /// Replace this message, sent earlier to the same chat, instead of sending a new one.
+    #[serde(default)]
+    edit_message_id: Option<i64>,
+    /// Remove these messages, sent earlier to the same chat, once the text is shown.
+    #[serde(default)]
+    delete_message_ids: Vec<i64>,
+    /// Arrive without a sound.
+    #[serde(default)]
+    silent: bool,
 }
 
 fn failure(status: StatusCode, code: &str) -> Response {
@@ -165,7 +199,10 @@ async fn delivery(
         && text_length <= TEXT_MAX_CHARS
         && !request.idempotency_key.is_empty()
         && request.idempotency_key.len() <= 200
-        && request.message_thread_id.is_none_or(|thread| thread > 0);
+        && request.message_thread_id.is_none_or(|thread| thread > 0)
+        && request.edit_message_id.is_none_or(|id| id > 0)
+        && request.delete_message_ids.len() <= DELETE_MAX
+        && request.delete_message_ids.iter().all(|id| *id > 0);
     if !usable {
         return failure(StatusCode::BAD_REQUEST, "invalid_request");
     }
@@ -176,12 +213,15 @@ async fn delivery(
     if let Some(id) = seen.ids.get(&request.idempotency_key) {
         return accepted(&request.idempotency_key, *id);
     }
-    match state
-        .sender
-        .deliver(request.chat_id, request.message_thread_id, &request.text)
-        .await
-    {
+    match show(&*state.sender, &request).await {
         Ok(id) => {
+            for old in request.delete_message_ids.iter().filter(|old| **old != id) {
+                // Telegram refuses after 48 hours, or when the person already deleted it. A
+                // message that stays is no reason to show the text twice.
+                if let Err(error) = state.sender.delete(request.chat_id, *old).await {
+                    warn!(%error, "a superseded message was not deleted");
+                }
+            }
             seen.remember(request.idempotency_key.clone(), id);
             accepted(&request.idempotency_key, id)
         }
@@ -201,6 +241,24 @@ async fn delivery(
             failure(StatusCode::BAD_GATEWAY, "telegram_unavailable")
         }
     }
+}
+
+/// Shows the text, by an edit when asked and possible, and returns the id of the message that
+/// carries it.
+async fn show(sender: &dyn Deliver, request: &Request) -> Result<i64, SendError> {
+    let (chat, thread, text) = (request.chat_id, request.message_thread_id, &request.text);
+    if let Some(id) = request.edit_message_id {
+        match sender.edit(chat, id, text).await {
+            Ok(()) => return Ok(id),
+            // Gone, deleted by the person, or otherwise not editable: the text is sent anew and
+            // the answer carries the new id.
+            Err(SendError::Rejected(reason)) => {
+                warn!(%reason, "a message could not be edited; sending it anew");
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    sender.post(chat, thread, text, request.silent).await
 }
 
 fn accepted(key: &str, message_id: i64) -> Response {

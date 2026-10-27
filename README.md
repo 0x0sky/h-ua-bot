@@ -30,6 +30,11 @@ From then on the hub sends, in words Porter writes:
 Це неофіційне джерело, а не повітряна тривога. Стежте за офіційними оповіщеннями. Відсутність повідомлень не означає безпеки.
 ```
 
+The hub can also ask the bot to keep one message current instead of adding a new one
+(`edit_message_id`), to remove superseded ones (`delete_message_ids`), and to deliver without a
+sound (`silent`), so an attack can be one board and one status rather than a message per report.
+What those messages say, and when they ring, is decided upstream; the bot only shows it.
+
 and, when the source calls a threat off (never on its own when a report merely lapses):
 
 ```text
