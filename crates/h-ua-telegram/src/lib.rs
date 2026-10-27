@@ -79,9 +79,46 @@ impl<T: Transport> TelegramClient<T> {
         thread_id: Option<i64>,
         text: &str,
     ) -> Result<i64, SendError> {
-        self.send_message(json!(chat), thread_id, text, false)
+        self.post(chat, thread_id, text, false).await
+    }
+
+    /// Like [`deliver`](Self::deliver), but `silent` delivers without a sound or a vibration.
+    pub async fn post(
+        &self,
+        chat: i64,
+        thread_id: Option<i64>,
+        text: &str,
+        silent: bool,
+    ) -> Result<i64, SendError> {
+        let mut body = message_body(json!(chat), thread_id, text);
+        if silent {
+            body["disable_notification"] = json!(true);
+        }
+        self.call_for_message("sendMessage", &body)
             .await?
             .ok_or_else(|| SendError::Unavailable("sendMessage returned no message_id".to_owned()))
+    }
+
+    /// Replaces the text of a message the bot sent. An edit that changes nothing is not an error.
+    pub async fn edit(&self, chat: i64, message_id: i64, text: &str) -> Result<(), SendError> {
+        let mut body = message_body(json!(chat), None, text);
+        body["message_id"] = json!(message_id);
+        match self.call_for_message("editMessageText", &body).await {
+            Err(SendError::Rejected(reason)) if reason.contains("message is not modified") => {
+                Ok(())
+            }
+            outcome => outcome.map(|_| ()),
+        }
+    }
+
+    /// Deletes a message the bot sent. Telegram refuses once it is older than 48 hours.
+    pub async fn delete(&self, chat: i64, message_id: i64) -> Result<(), SendError> {
+        self.call_for_message(
+            "deleteMessage",
+            &json!({"chat_id": chat, "message_id": message_id}),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn send_message(
@@ -91,16 +128,7 @@ impl<T: Transport> TelegramClient<T> {
         text: &str,
         ask_location: bool,
     ) -> Result<Option<i64>, SendError> {
-        let mut body = json!({
-            "chat_id": chat,
-            "text": text,
-            // A preview of the source post under every alert is noise, and the link is there
-            // for whoever wants the original.
-            "link_preview_options": {"is_disabled": true},
-        });
-        if let Some(thread) = thread_id {
-            body["message_thread_id"] = json!(thread);
-        }
+        let mut body = message_body(chat, thread_id, text);
         if ask_location {
             body["reply_markup"] = json!({
                 "keyboard": [[{"text": LOCATION_BUTTON, "request_location": true}]],
@@ -108,9 +136,14 @@ impl<T: Transport> TelegramClient<T> {
                 "one_time_keyboard": true,
             });
         }
+        self.call_for_message("sendMessage", &body).await
+    }
+
+    /// Calls a method that answers with a message, or with `true`, and returns the message id.
+    async fn call_for_message(&self, method: &str, body: &Value) -> Result<Option<i64>, SendError> {
         let raw = self
             .transport
-            .call("sendMessage", &body)
+            .call(method, body)
             .await
             .map_err(|e| SendError::Unavailable(e.to_string()))?;
         let reply: Reply<Value> =
@@ -124,6 +157,20 @@ impl<T: Transport> TelegramClient<T> {
             .and_then(|message| message.get("message_id"))
             .and_then(Value::as_i64))
     }
+}
+
+fn message_body(chat: Value, thread_id: Option<i64>, text: &str) -> Value {
+    let mut body = json!({
+        "chat_id": chat,
+        "text": text,
+        // A preview of the source post under every alert is noise, and the link is there
+        // for whoever wants the original.
+        "link_preview_options": {"is_disabled": true},
+    });
+    if let Some(thread) = thread_id {
+        body["message_thread_id"] = json!(thread);
+    }
+    body
 }
 
 #[derive(Deserialize)]
@@ -578,6 +625,45 @@ mod tests {
         assert_eq!(calls[0].1["message_thread_id"], 5);
         assert_eq!(calls[0].1["text"], "текст");
         assert!(calls[0].1.get("reply_markup").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_board_is_posted_quietly_edited_in_place_and_deleted() {
+        let (fake, script) = Fake::answering(vec![
+            Ok(json!({"ok": true, "result": {"message_id": 5}})),
+            Ok(json!({"ok": true, "result": {"message_id": 5}})),
+            Ok(
+                json!({"ok": false, "error_code": 400, "description": "Bad Request: message is not modified: specified new message content and reply markup are exactly the same"}),
+            ),
+            Ok(
+                json!({"ok": false, "error_code": 400, "description": "Bad Request: message to edit not found"}),
+            ),
+            Ok(json!({"ok": true, "result": true})),
+        ]);
+        let client = TelegramClient::new(fake);
+
+        assert_eq!(client.post(42, None, "a", true).await, Ok(5));
+        client.edit(42, 5, "b").await.unwrap();
+        client.edit(42, 5, "b").await.unwrap();
+        assert!(matches!(
+            client.edit(42, 5, "c").await,
+            Err(SendError::Rejected(_))
+        ));
+        client.delete(42, 5).await.unwrap();
+
+        let calls = script.calls.lock().unwrap();
+        assert_eq!(calls[0].1["disable_notification"], true);
+        assert_eq!(calls[1].0, "editMessageText");
+        assert_eq!(calls[1].1["message_id"], 5);
+        assert_eq!(calls[1].1["text"], "b");
+        assert_eq!(calls[1].1["link_preview_options"]["is_disabled"], true);
+        assert_eq!(
+            calls[4],
+            (
+                "deleteMessage".to_owned(),
+                json!({"chat_id": 42, "message_id": 5})
+            )
+        );
     }
 
     #[tokio::test]

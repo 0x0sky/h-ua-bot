@@ -4,6 +4,7 @@
 //! Composition of h-ua-bot: configuration, the Telegram conversation, and the endpoint the hub
 //! delivers alerts to.
 
+pub mod board;
 pub mod config;
 pub mod delivery;
 pub mod runtime;

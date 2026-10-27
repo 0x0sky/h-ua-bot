@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use h_ua_bot::board::Boards;
 use h_ua_bot::delivery::{Deliver, DeliveryState, SECRET_HEADER, router};
 use h_ua_core::ports::SendError;
 use serde_json::{Value, json};
@@ -20,7 +21,21 @@ struct FakeTelegram {
 
 #[async_trait]
 impl Deliver for FakeTelegram {
-    async fn deliver(&self, chat: i64, thread: Option<i64>, text: &str) -> Result<i64, SendError> {
+    async fn edit(&self, _: i64, _: i64, _: &str) -> Result<(), SendError> {
+        unreachable!("text deliveries are never edited")
+    }
+
+    async fn delete(&self, _: i64, _: i64) -> Result<(), SendError> {
+        unreachable!("text deliveries are never deleted")
+    }
+
+    async fn post(
+        &self,
+        chat: i64,
+        thread: Option<i64>,
+        text: &str,
+        _silent: bool,
+    ) -> Result<i64, SendError> {
         self.sent
             .lock()
             .unwrap()
@@ -36,7 +51,11 @@ impl Deliver for FakeTelegram {
 
 async fn serve() -> (String, Arc<FakeTelegram>) {
     let telegram = Arc::new(FakeTelegram::default());
-    let app = router(DeliveryState::new(SECRET, telegram.clone()));
+    let app = router(DeliveryState::new(
+        SECRET,
+        telegram.clone(),
+        Arc::new(Boards::new()),
+    ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

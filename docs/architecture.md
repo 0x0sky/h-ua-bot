@@ -78,6 +78,12 @@ the text, and an idempotency key, with the shared secret in `X-Prism-Bot-Deliver
 - The secret is compared in time that does not depend on where it differs. Without it nothing is
   sent.
 - The text is sent as it is, at most 4096 characters. It is never inspected or changed.
+- An optional `signal` carries the `prism-hub.signal-alert.v1` payload the text was written from,
+  plus its `assessment_id`. When it is present and readable, the report goes onto the chat's live
+  board (below) and the text is not sent. When it cannot be read, the text is sent as before, so
+  a report is never lost to a parsing problem. The answer's `provider_message_id` is the status
+  message that now carries the report, or `0` when nothing needed showing (a report that lapsed
+  on the way, or a retraction of one never shown).
 - A key already delivered gets the first answer and sends nothing again. This is kept in memory,
   so a restart forgets it: a hub retry that crosses a restart can send a message twice.
 - Telegram's refusals map to what the hub does with them. A blocked chat or a rejected message is
@@ -85,9 +91,25 @@ the text, and an idempotency key, with the shared secret in `X-Prism-Bot-Deliver
   down is a `502` and is retried.
 - Only one delivery is in flight at a time, so a retry sees the first attempt's outcome.
 
+## The live board
+
+`h-ua-core::board` decides, `h-ua-bot::board` shows. Per chat, during one attack:
+
+| Message | Sent | Then |
+| --- | --- | --- |
+| Board: every active report, at the zone first, then near it | quietly, on the first report | edited on every change; final edit when all are over |
+| Status: how close, what, how many reports | rings when the danger grows (quiet → near → at, or a new kind) | edited quietly otherwise; the replaced status is deleted |
+| Quiet status: the sources went quiet, not an all-clear | quietly, when the last report is called off or lapses | replaced by the next attack's status |
+
+Reports lapse on their `valid_until`, checked every 30 seconds. A report already lapsed when it
+arrives changes nothing. A position older than three days is mentioned in the quiet status only,
+at most once a day. Boards and position times are kept in memory and forgotten on `/stop` and on
+restart; after a restart the next report starts a new board.
+
 ## What is kept
 
-The bot keeps nothing on disk.
+The bot keeps nothing on disk. In memory it keeps, per chat, the active board and when a position
+was last shared, until `/stop` or a restart.
 
 | The hub keeps | Never kept, by the bot or the hub |
 | --- | --- |
@@ -130,7 +152,8 @@ A false all-clear is the worst message this can send. The guards live where the 
   reader deliberately does not map a region to its capital.
 - **Places the gazetteer lacks** are dropped by the reader. Coverage grows in `prism-signal`.
 - **A static position goes stale.** Someone who moves without a live location keeps getting alerts
-  for where they were. `/status` shows the place; a reminder to refresh is not built.
+  for where they were. The quiet status reminds them when the position is over three days old;
+  after a restart the bot does not know how old a position is and says nothing.
 - **One hub per bot origin.** The hub delivers every Telegram message through one bot origin, so
   this bot needs its own hub, or to be the only Telegram bot that hub delivers through.
 - **One process.** Long polling and the in-memory delivery memory assume a single instance.
