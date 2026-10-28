@@ -55,6 +55,7 @@ impl<'a> Conversation<'a> {
                 "Натисніть кнопку нижче, щоб поділитися позицією. Якщо поділитеся «живою» позицією, я оновлюватиму її, поки ви рухаєтесь.",
             )]),
             "kinds" => self.kinds(event, args).await,
+            "menu" => Ok(vec![Message::text("Головне меню")]),
             "nearby" => self.nearby(event, args).await,
             "status" => self.status(event).await,
             "stop" => {
@@ -77,7 +78,7 @@ impl<'a> Conversation<'a> {
              Кнопки під полем вводу:\n\
              📍 Оновити позицію\n\
              🛡 Стан — що я про вас знаю\n\
-             ⚙️ Що стежити — дрони, КАБи, ракети, загрози поруч\n\
+             ⚙️ За чим стежити? — дрони, КАБи, ракети, загрози поруч\n\
              /stop — видалити все"
         ))
     }
@@ -109,7 +110,7 @@ impl<'a> Conversation<'a> {
             return Ok(Vec::new());
         }
         Ok(vec![Message::text(format!(
-            "Позицію збережено. {}\nТочних координат я не зберігаю, лише клітинку близько 3 км.\n\nЗараз стежу за: {}. Змінити: ⚙️ Що стежити.",
+            "Позицію збережено. {}\nТочних координат я не зберігаю, лише клітинку близько 3 км.\n\nЗараз стежу за: {}. Змінити: ⚙️ За чим стежити?",
             self.near(cell),
             describe(&subscription.categories),
         ))])
@@ -195,7 +196,7 @@ impl<'a> Conversation<'a> {
         ))])
     }
 
-    /// A tap on the settings panel: switch one thing and redraw the panel where it is.
+    /// A settings choice: switch one thing and return the updated panel.
     async fn choice(
         &self,
         event: &Event,
@@ -272,7 +273,7 @@ fn settings(subscription: &Subscription, note: Option<&str>) -> Message {
         format!("{} Загрози поруч", mark(subscription.include_nearby)),
         format!("{TOGGLE}{NEARBY}"),
     )];
-    let mut text = "⚙️ Що стежити\n\nНатисніть, щоб увімкнути чи вимкнути.\n\
+    let mut text = "⚙️ За чим стежити?\n\nНатисніть, щоб увімкнути чи вимкнути.\n\
                     «Поруч» — коли щось летить повз ваше місто або біля нього, а не на нього."
         .to_owned();
     if let Some(note) = note {

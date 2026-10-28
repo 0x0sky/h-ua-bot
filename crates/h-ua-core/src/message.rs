@@ -13,11 +13,12 @@ pub struct Message {
     pub text: String,
     /// Offer the person a way to share their position with one tap, where the messenger has one.
     pub ask_location: bool,
-    /// Buttons under the message, in rows. Tapping one comes back as
+    /// Choices in rows. A messenger may render these as inline or reply-keyboard buttons.
+    /// Tapping one comes back as
     /// [`EventKind::Choice`](crate::ports::EventKind::Choice) with its `data`.
     pub choices: Vec<Vec<Choice>>,
-    /// Replace this earlier message instead of sending a new one: a panel of choices is updated
-    /// where the person tapped it.
+    /// Replace this earlier message when the messenger supports editing its choice markup.
+    /// Telegram reply keyboards require a new message instead.
     pub replaces: Option<String>,
 }
 
