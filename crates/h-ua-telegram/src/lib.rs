@@ -54,23 +54,78 @@ fn button_command(label: &str) -> Option<&'static str> {
     })
 }
 
-/// The command menu, in the order a person needs it.
-const COMMANDS: [(&str, &str); 5] = [
-    ("location", "📍 Оновити позицію"),
-    ("status", "🛡 Що я стежу для вас"),
-    ("kinds", "⚙️ За чим стежити? Дрони, КАБи, ракети, поруч"),
-    ("help", "❓ Як це працює"),
-    ("stop", "🗑 Видалити підписку й позицію"),
-];
+/// What a person sees before typing anything, in one language: the command menu, in the order
+/// a person needs it, and what the bot is.
+struct Profile {
+    commands: [(&'static str, &'static str); 5],
+    /// Shown in an empty chat before /start. At most 512 characters.
+    description: &'static str,
+    /// The line under the bot's name in search and in its profile. At most 120 characters.
+    short_description: &'static str,
+}
 
-/// What the bot is, shown in an empty chat before /start.
-const DESCRIPTION: &str = "Повідомляю про повітряні загрози лише для вашої зони: дрони, КАБи, ракети.\n\n\
+impl Profile {
+    fn of(locale: Locale) -> &'static Profile {
+        match locale {
+            Locale::Uk => &PROFILE_UK,
+            Locale::Ru => &PROFILE_RU,
+            Locale::En => &PROFILE_EN,
+        }
+    }
+}
+
+/// Telegram picks a profile by the language of a person's app, without a region. The languages
+/// the bot answers in their own way get their profile; everyone else gets the default one, in
+/// English.
+const PROFILE_LANGUAGES: [&str; 3] = ["uk", "be", "ru"];
+
+static PROFILE_UK: Profile = Profile {
+    commands: [
+        ("location", "📍 Оновити позицію"),
+        ("status", "🛡 Що я стежу для вас"),
+        ("kinds", "⚙️ За чим стежити? Дрони, КАБи, ракети, поруч"),
+        ("help", "❓ Як це працює"),
+        ("stop", "🗑 Видалити підписку й позицію"),
+    ],
+    description: "Повідомляю про повітряні загрози лише для вашої зони: дрони, КАБи, ракети.\n\n\
 Одне табло оновлюється на місці, а статус дзвонить лише тоді, коли небезпека ближчає.\n\n\
 Позицію зберігаю як клітинку близько 3 км, не точні координати.\n\n\
-Неофіційний сервіс: орієнтуйтесь на офіційні сповіщення про тривогу.";
+Неофіційний сервіс: орієнтуйтесь на офіційні сповіщення про тривогу.",
+    short_description: "Повітряні загрози лише для вашої зони. Без спаму. Неофіційно.",
+};
 
-/// The line under the bot's name in search and in its profile.
-const SHORT_DESCRIPTION: &str = "Повітряні загрози лише для вашої зони. Без спаму. Неофіційно.";
+static PROFILE_RU: Profile = Profile {
+    commands: [
+        ("location", "📍 Обновить позицию"),
+        ("status", "🛡 Что я отслеживаю для вас"),
+        ("kinds", "⚙️ За чем следить? Дроны, КАБы, ракеты, рядом"),
+        ("help", "❓ Как это работает"),
+        ("stop", "🗑 Удалить подписку и позицию"),
+    ],
+    description: "Сообщаю о воздушных угрозах только для вашей зоны: дроны, КАБы, ракеты.\n\n\
+Одно табло обновляется на месте, а статус звонит только тогда, когда опасность приближается.\n\n\
+Позицию храню как клетку около 3 км, а не точные координаты.\n\n\
+Неофициальный сервис: ориентируйтесь на официальные оповещения о тревоге.",
+    short_description: "Воздушные угрозы только для вашей зоны. Без спама. Неофициально.",
+};
+
+static PROFILE_EN: Profile = Profile {
+    commands: [
+        ("location", "📍 Update position"),
+        ("status", "🛡 What I follow for you"),
+        (
+            "kinds",
+            "⚙️ What to follow? Drones, guided bombs, missiles, nearby",
+        ),
+        ("help", "❓ How it works"),
+        ("stop", "🗑 Delete subscription and position"),
+    ],
+    description: "I report air threats for your area only: drones, guided bombs, missiles.\n\n\
+One board updates in place, and the status rings only when danger gets closer.\n\n\
+I keep your position as a cell of about 3 km, not as exact coordinates.\n\n\
+Unofficial service: follow the official air raid alerts.",
+    short_description: "Air threats for your area only. No spam. Unofficial.",
+};
 
 /// Telegram, over a [`Transport`].
 pub struct TelegramClient<T> {
@@ -134,24 +189,53 @@ impl<T: Transport> TelegramClient<T> {
 
 impl<T: Transport> TelegramClient<T> {
     /// Sets what a person sees before typing anything: the command menu and the bot's
-    /// description. Telegram keeps them, so calling this on every start is enough.
+    /// description, in English by default and in the bot's own language for Ukrainian,
+    /// Belarusian and Russian apps. Telegram keeps them, so calling this on every start is
+    /// enough.
     pub async fn set_up_profile(&self) -> Result<(), SendError> {
-        let commands: Vec<Value> = COMMANDS
-            .iter()
-            .map(|(command, description)| json!({"command": command, "description": description}))
-            .collect();
-        self.call_for_message("setMyCommands", &json!({"commands": commands}))
-            .await?;
+        self.set_profile(None, Profile::of(Locale::En)).await?;
+        for language in PROFILE_LANGUAGES {
+            self.set_profile(Some(language), Profile::of(Locale::from_tag(language)))
+                .await?;
+        }
         self.call_for_message(
             "setChatMenuButton",
             &json!({"menu_button": {"type": "commands"}}),
         )
+        .await
+        .map(|_| ())
+    }
+
+    /// Sets one language's profile, or the default one without a language.
+    async fn set_profile(
+        &self,
+        language: Option<&str>,
+        profile: &Profile,
+    ) -> Result<(), SendError> {
+        let commands: Vec<Value> = profile
+            .commands
+            .iter()
+            .map(|(command, description)| json!({"command": command, "description": description}))
+            .collect();
+        let with_language = |mut body: Value| {
+            if let Some(language) = language {
+                body["language_code"] = json!(language);
+            }
+            body
+        };
+        self.call_for_message(
+            "setMyCommands",
+            &with_language(json!({"commands": commands})),
+        )
         .await?;
-        self.call_for_message("setMyDescription", &json!({"description": DESCRIPTION}))
-            .await?;
+        self.call_for_message(
+            "setMyDescription",
+            &with_language(json!({"description": profile.description})),
+        )
+        .await?;
         self.call_for_message(
             "setMyShortDescription",
-            &json!({"short_description": SHORT_DESCRIPTION}),
+            &with_language(json!({"short_description": profile.short_description})),
         )
         .await
         .map(|_| ())
@@ -887,30 +971,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_profile_sets_the_command_menu_and_the_description() {
-        let (fake, script) = Fake::answering(vec![
-            Ok(json!({"ok": true, "result": true})),
-            Ok(json!({"ok": true, "result": true})),
-            Ok(json!({"ok": true, "result": true})),
-            Ok(json!({"ok": true, "result": true})),
-        ]);
+    async fn the_profile_is_set_in_english_by_default_and_per_language() {
+        let (fake, script) = Fake::answering(vec![Ok(json!({"ok": true, "result": true})); 13]);
         TelegramClient::new(fake).set_up_profile().await.unwrap();
         let calls = script.calls.lock().unwrap();
-        let methods: Vec<&str> = calls.iter().map(|(method, _)| method.as_str()).collect();
+        assert_eq!(calls.len(), 13);
+        assert_eq!(calls[12].0, "setChatMenuButton");
+        let commands_by_language: Vec<(Value, Value)> = calls
+            .iter()
+            .filter(|(method, _)| method == "setMyCommands")
+            .map(|(_, body)| {
+                (
+                    body["language_code"].clone(),
+                    body["commands"][0]["description"].clone(),
+                )
+            })
+            .collect();
         assert_eq!(
-            methods,
+            commands_by_language,
             [
-                "setMyCommands",
-                "setChatMenuButton",
-                "setMyDescription",
-                "setMyShortDescription"
+                (Value::Null, json!("📍 Update position")),
+                (json!("uk"), json!("📍 Оновити позицію")),
+                (json!("be"), json!("📍 Оновити позицію")),
+                (json!("ru"), json!("📍 Обновить позицию")),
             ]
         );
-        let commands = calls[0].1["commands"].as_array().unwrap();
-        assert_eq!(commands[0]["command"], "location");
-        assert!(commands.iter().any(|c| c["command"] == "stop"));
-        assert!(DESCRIPTION.chars().count() <= 512);
-        assert!(SHORT_DESCRIPTION.chars().count() <= 120);
+        let short: Vec<&Value> = calls
+            .iter()
+            .filter(|(method, _)| method == "setMyShortDescription")
+            .map(|(_, body)| &body["short_description"])
+            .collect();
+        assert_eq!(
+            short[0],
+            "Air threats for your area only. No spam. Unofficial."
+        );
+    }
+
+    #[test]
+    fn every_profile_fits_telegram_and_lists_the_same_commands() {
+        for locale in Locale::ALL {
+            let profile = Profile::of(locale);
+            assert!(profile.description.chars().count() <= 512, "{locale:?}");
+            assert!(
+                profile.short_description.chars().count() <= 120,
+                "{locale:?}"
+            );
+            let names: Vec<&str> = profile.commands.iter().map(|(name, _)| *name).collect();
+            assert_eq!(names, ["location", "status", "kinds", "help", "stop"]);
+            for (_, description) in profile.commands {
+                assert!(description.chars().count() <= 256);
+            }
+        }
     }
 
     #[tokio::test]

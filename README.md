@@ -54,7 +54,9 @@ An explicit retraction of a prior report is shown without implying official all-
 
 The same commands are in Telegram's menu, set with `setMyCommands` on every start, and every reply
 carries a keyboard that stays under the input field: 📍 Оновити позицію, 🛡 Стан, ⚙️ За чим стежити?,
-❓ Довідка. An empty chat shows what the bot is before the first `/start`.
+❓ Довідка. An empty chat shows what the bot is before the first `/start`. Telegram picks the menu
+and the description by the app's language without a region: `uk` and `be` get Ukrainian, `ru`
+Russian, and every other language the English default.
 
 The conversation and its keyboards speak the person's language, read from Telegram's
 `language_code`:
