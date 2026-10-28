@@ -26,8 +26,7 @@ From then on the hub sends, in words Porter writes:
 Що: ударні дрони
 Оновлено: 14:59 (за київським часом)
 
-Це неофіційне повідомлення, а не сигнал повітряної тривоги.
-Орієнтуйтесь на офіційні сповіщення. Відсутність повідомлень не означає безпеки.
+Це неофіційне повідомлення, а не сигнал повітряної тривоги. Орієнтуйтесь на офіційні сповіщення. Відсутність повідомлень не означає безпеки.
 ```
 
 The hub can also ask the bot to update or remove a prior message, or to deliver
@@ -112,18 +111,18 @@ docker build -t h-ua-bot .
 
 Evaluating threat reports and deciding whom to notify are
 [`prism-signal`](https://github.com/aiaiaiai-org/prism-signal)'s and
-[`prism-hub`](https://github.com/aiaiaiai-org/prism-hub)'s jobs. The wording of an alert belongs to
-[`prism-porter`](https://github.com/aiaiaiai-org/prism-porter)'s. See
+[`prism-hub`](https://github.com/aiaiaiai-org/prism-hub)'s jobs. Alerts are worded by
+[`prism-porter`](https://github.com/aiaiaiai-org/prism-porter). See
 [`docs/architecture.md`](docs/architecture.md).
 
 ## Status
 
-Pre-release. Built and tested here: the conversation, the hub client (against a stand-in and, by
-hand, against a real hub), the delivery endpoint in the format the hub's gateway sends (checked
-against the hub's own gateway), the Telegram client against a scripted Bot API. The Telegram client is covered by a scripted Bot API transport; live production
-routing and authentication are verified separately. A controlled real-message end-to-end delivery test is still required.
+The bot, hub connection, Telegram subscription flow and delivery endpoint have
+automated regression coverage. Production HTTP routing and delivery-secret
+authentication have been verified. **An end-to-end real Telegram alert receipt
+is not yet confirmed**; health and authentication tests do not demonstrate it.
 
-Not built: other messengers, reports about a whole region (`Київська
-область`), webhooks, more than one process. Limits are listed in the architecture document.
+Limitations: the first client is Telegram; broad regional reports and further
+messenger integrations require additional work. See the architecture document.
 
 Licensed under MIT.
