@@ -53,15 +53,6 @@ impl Category {
             _ => None,
         }
     }
-
-    /// Name shown to a person, in the plural.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Drone => "дрони",
-            Self::Bomb => "КАБи",
-            Self::Missile => "ракети",
-        }
-    }
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use h_ua_core::category::Category;
+use h_ua_core::copy::Copy;
 use h_ua_core::locale::Locale;
 use h_ua_core::message::{Choice, Message};
 use h_ua_core::ports::{ClientError, Event, EventKind, Messenger, SendError};
@@ -30,19 +31,28 @@ pub const CLIENT_NAME: &str = "telegram";
 /// Seconds Telegram holds a `getUpdates` request open waiting for something to happen.
 const LONG_POLL_SECS: u64 = 30;
 
-/// Label of the button that shares a position.
-const LOCATION_BUTTON: &str = "📍 Оновити позицію";
-const BACK_BUTTON: &str = "⬅️ Меню";
 /// Users may still have the previous menu stored in Telegram after an upgrade.
 const LEGACY_KINDS_BUTTON: &str = "⚙️ Що стежити";
 
-/// The buttons under the input field, and the command each one stands for. Telegram sends a
-/// button's label as plain text, so the label is matched back to the command.
-const MENU_BUTTONS: [(&str, &str); 3] = [
-    ("🛡 Стан", "status"),
-    ("⚙️ За чим стежити?", "kinds"),
-    ("❓ Довідка", "help"),
-];
+/// The command a button under the input field stands for. Telegram sends a button's label as
+/// plain text, so the label is matched back to its command, in any language the bot speaks: a
+/// person may change their app's language while an older keyboard is still on screen.
+fn button_command(label: &str) -> Option<&'static str> {
+    if label == LEGACY_KINDS_BUTTON {
+        return Some("kinds");
+    }
+    Locale::ALL.into_iter().map(Copy::of).find_map(|copy| {
+        [
+            (copy.button_status, "status"),
+            (copy.button_settings, "kinds"),
+            (copy.button_help, "help"),
+            (copy.button_back, "menu"),
+        ]
+        .into_iter()
+        .find(|(button, _)| *button == label)
+        .map(|(_, command)| command)
+    })
+}
 
 /// The command menu, in the order a person needs it.
 const COMMANDS: [(&str, &str); 5] = [
@@ -212,10 +222,11 @@ impl<T: Transport> TelegramClient<T> {
         let mut body = message_body(chat, None, &message.text);
         // A reply keyboard replaces the letter keyboard. It cannot be attached to an edited
         // message, so a settings toggle sends the refreshed panel and tidies the old one.
+        let copy = Copy::of(message.locale);
         body["reply_markup"] = if message.choices.is_empty() {
-            menu(message.ask_location)
+            menu(copy, message.ask_location)
         } else {
-            buttons(&message.choices)
+            buttons(copy, &message.choices)
         };
         let sent = self.call_for_message("sendMessage", &body).await?;
         if let Some(chat) = chat_number {
@@ -307,18 +318,18 @@ impl<T: Transport> TelegramClient<T> {
 
 /// The keyboard every reply in a conversation carries, so what the bot can do is always one tap
 /// away. Alerts arrive through [`TelegramClient::post`] without one, and the keyboard stays.
-fn menu(ask_location: bool) -> Value {
-    let row: Vec<Value> = MENU_BUTTONS
-        .iter()
-        .map(|(label, _)| json!({"text": label}))
+fn menu(copy: &Copy, ask_location: bool) -> Value {
+    let row: Vec<Value> = [copy.button_status, copy.button_settings, copy.button_help]
+        .into_iter()
+        .map(|label| json!({"text": label}))
         .collect();
     let placeholder = if ask_location {
-        "Натисніть 📍, щоб поділитися позицією"
+        copy.hint_location
     } else {
-        "Команда або кнопка нижче"
+        copy.hint_menu
     };
     json!({
-        "keyboard": [[{"text": LOCATION_BUTTON, "request_location": true}], row],
+        "keyboard": [[{"text": copy.button_location, "request_location": true}], row],
         "resize_keyboard": true,
         "is_persistent": true,
         "input_field_placeholder": placeholder,
@@ -326,7 +337,7 @@ fn menu(ask_location: bool) -> Value {
 }
 
 /// Custom reply keyboard for settings. Text replies are mapped back to choice data per chat.
-fn buttons(choices: &[Vec<Choice>]) -> Value {
+fn buttons(copy: &Copy, choices: &[Vec<Choice>]) -> Value {
     let mut rows: Vec<Vec<Value>> = choices
         .iter()
         .map(|row| {
@@ -335,29 +346,33 @@ fn buttons(choices: &[Vec<Choice>]) -> Value {
                 .collect()
         })
         .collect();
-    rows.push(vec![json!({"text": BACK_BUTTON})]);
+    rows.push(vec![json!({"text": copy.button_back})]);
     json!({
         "keyboard": rows,
         "resize_keyboard": true,
         "is_persistent": true,
         "one_time_keyboard": false,
-        "input_field_placeholder": "Оберіть, за чим стежити",
+        "input_field_placeholder": copy.hint_settings,
     })
 }
 
 /// A Telegram client may retain the reply keyboard across bot restarts. Decode only
-/// our known category labels when no keyboard state has been established for this chat.
+/// our known category labels, in any language, when no keyboard state has been established for
+/// this chat.
 fn restored_choice(label: &str) -> Option<String> {
     let kind = label
         .strip_prefix("✅ ")
-        .or_else(|| label.strip_prefix("▫️ "))?;
-    if kind == "Загрози поруч" {
-        return Some("toggle:nearby".to_owned());
-    }
-    Category::ALL
-        .into_iter()
-        .find(|category| category.label().to_lowercase() == kind.to_lowercase())
-        .map(|category| format!("toggle:{}", category.key()))
+        .or_else(|| label.strip_prefix("▫️ "))?
+        .to_lowercase();
+    Locale::ALL.into_iter().map(Copy::of).find_map(|copy| {
+        if kind == copy.nearby_choice.to_lowercase() {
+            return Some("toggle:nearby".to_owned());
+        }
+        Category::ALL
+            .into_iter()
+            .find(|category| copy.category(*category).to_lowercase() == kind)
+            .map(|category| format!("toggle:{}", category.key()))
+    })
 }
 
 fn message_body(chat: Value, thread_id: Option<i64>, text: &str) -> Value {
@@ -497,32 +512,12 @@ fn event_from(update: Update) -> Option<Event> {
         return None;
     }
     let text = message.text?;
-    if text.trim() == BACK_BUTTON {
+    if let Some(command) = button_command(text.trim()) {
         return Some(Event {
             from,
             locale,
             kind: EventKind::Command {
-                name: "menu".to_owned(),
-                args: String::new(),
-            },
-        });
-    }
-    if text.trim() == LEGACY_KINDS_BUTTON {
-        return Some(Event {
-            from,
-            locale,
-            kind: EventKind::Command {
-                name: "kinds".to_owned(),
-                args: String::new(),
-            },
-        });
-    }
-    if let Some((_, command)) = MENU_BUTTONS.iter().find(|(label, _)| *label == text.trim()) {
-        return Some(Event {
-            from,
-            locale,
-            kind: EventKind::Command {
-                name: (*command).to_owned(),
+                name: command.to_owned(),
                 args: String::new(),
             },
         });
@@ -669,6 +664,7 @@ impl<T: Transport> Messenger for TelegramClient<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use h_ua_core::copy::UK;
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
@@ -1017,7 +1013,7 @@ mod tests {
         assert_eq!(calls[0].0, "sendMessage");
         let markup = &calls[0].1["reply_markup"];
         assert_eq!(markup["keyboard"][0][0]["text"], "✅ Дрони");
-        assert_eq!(markup["keyboard"][1][0]["text"], BACK_BUTTON);
+        assert_eq!(markup["keyboard"][1][0]["text"], UK.button_back);
         assert_eq!(markup["is_persistent"], true);
         assert_eq!(markup["one_time_keyboard"], false);
         assert!(markup.get("inline_keyboard").is_none());
@@ -1059,7 +1055,7 @@ mod tests {
             ok(),
             Ok(updates(json!([
                 private(1, 42, json!({"text": "✅ Дрони"})),
-                private(2, 42, json!({"text": BACK_BUTTON})),
+                private(2, 42, json!({"text": UK.button_back})),
             ]))),
         ]);
         let client = TelegramClient::new(fake);
