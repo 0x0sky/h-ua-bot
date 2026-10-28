@@ -88,6 +88,8 @@ the text, and an idempotency key, with the shared secret in `X-Prism-Bot-Deliver
     is best effort: Telegram refuses after 48 hours, and a message that stays fails nothing. The
     message carrying the text is never deleted.
   - `silent` sends without a sound.
+  - `pin` pins the message above the chat, without a notification, when it is sent anew; an
+    edit keeps the pin it has. A pin that fails is logged, and the delivery still succeeds.
 - A key already delivered gets the first answer and sends nothing again. This is kept in memory,
   so a restart forgets it: a hub retry that crosses a restart can send a message twice.
 - Telegram's refusals map to what the hub does with them. A blocked chat or a rejected message is

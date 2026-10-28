@@ -161,6 +161,16 @@ impl<T: Transport> TelegramClient<T> {
         }
     }
 
+    /// Pins a message above the chat, without a notification.
+    pub async fn pin(&self, chat: i64, message_id: i64) -> Result<(), SendError> {
+        self.call_for_message(
+            "pinChatMessage",
+            &json!({"chat_id": chat, "message_id": message_id, "disable_notification": true}),
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Deletes a message the bot sent. Telegram refuses once it is older than 48 hours.
     pub async fn delete(&self, chat: i64, message_id: i64) -> Result<(), SendError> {
         self.call_for_message(
