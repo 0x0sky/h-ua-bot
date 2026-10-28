@@ -20,6 +20,7 @@ struct FakeTelegram {
     edits: Mutex<Vec<(i64, i64, String)>>,
     edit_answers: Mutex<Vec<Result<(), SendError>>>,
     deleted: Mutex<Vec<(i64, i64)>>,
+    pinned: Mutex<Vec<(i64, i64)>>,
 }
 
 #[async_trait]
@@ -37,6 +38,11 @@ impl Deliver for FakeTelegram {
     async fn delete(&self, chat: i64, id: i64) -> Result<(), SendError> {
         self.deleted.lock().unwrap().push((chat, id));
         Err(SendError::Rejected("message can't be deleted".into()))
+    }
+
+    async fn pin(&self, chat: i64, id: i64) -> Result<(), SendError> {
+        self.pinned.lock().unwrap().push((chat, id));
+        Ok(())
     }
 
     async fn post(
@@ -248,6 +254,33 @@ async fn a_plain_delivery_rings_edits_nothing_and_deletes_nothing() {
     assert_eq!(telegram.silent.lock().unwrap().as_slice(), [false]);
     assert!(telegram.edits.lock().unwrap().is_empty());
     assert!(telegram.deleted.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_board_is_pinned_when_sent_anew_and_an_edit_keeps_its_pin() {
+    let (url, telegram) = serve().await;
+    let mut request = body("board-v1");
+    request["pin"] = json!(true);
+    request["silent"] = json!(true);
+    post(&url, Some(SECRET), &request).await;
+    assert_eq!(telegram.pinned.lock().unwrap().as_slice(), [(42, 1000)]);
+
+    let mut edit = body("board-v2");
+    edit["pin"] = json!(true);
+    edit["edit_message_id"] = json!(1000);
+    post(&url, Some(SECRET), &edit).await;
+    assert_eq!(
+        telegram.pinned.lock().unwrap().len(),
+        1,
+        "an edit is not pinned again"
+    );
+
+    post(&url, Some(SECRET), &body("plain")).await;
+    assert_eq!(
+        telegram.pinned.lock().unwrap().len(),
+        1,
+        "nothing else is pinned"
+    );
 }
 
 #[tokio::test]

@@ -10,7 +10,8 @@
 //! The bot is a view: what to show and when to ring are the hub's to decide. So a delivery may
 //! also say to replace a message sent earlier instead of sending a new one (`edit_message_id`),
 //! to remove messages it supersedes (`delete_message_ids`), and to arrive without a sound
-//! (`silent`). The hub keeps the message ids from the answers; the bot keeps none.
+//! (`silent`), and to be pinned above the chat (`pin`). The hub keeps the message ids from the
+//! answers; the bot keeps none.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -62,6 +63,9 @@ pub trait Deliver: Send + Sync {
 
     /// Deletes a message sent earlier.
     async fn delete(&self, chat_id: i64, message_id: i64) -> Result<(), SendError>;
+
+    /// Pins a message above the chat, without a notification.
+    async fn pin(&self, chat_id: i64, message_id: i64) -> Result<(), SendError>;
 }
 
 #[async_trait]
@@ -82,6 +86,10 @@ impl<T: Transport> Deliver for TelegramClient<T> {
 
     async fn delete(&self, chat_id: i64, message_id: i64) -> Result<(), SendError> {
         TelegramClient::delete(self, chat_id, message_id).await
+    }
+
+    async fn pin(&self, chat_id: i64, message_id: i64) -> Result<(), SendError> {
+        TelegramClient::pin(self, chat_id, message_id).await
     }
 }
 
@@ -154,6 +162,9 @@ struct Request {
     /// Arrive without a sound.
     #[serde(default)]
     silent: bool,
+    /// Pin the message above the chat when it is sent anew. An edit keeps the pin it has.
+    #[serde(default)]
+    pin: bool,
 }
 
 fn failure(status: StatusCode, code: &str) -> Response {
@@ -214,7 +225,13 @@ async fn delivery(
         return accepted(&request.idempotency_key, *id);
     }
     match show(&*state.sender, &request).await {
-        Ok(id) => {
+        Ok((id, posted)) => {
+            if request.pin && posted {
+                // A board that is not pinned still shows; it is just not on top.
+                if let Err(error) = state.sender.pin(request.chat_id, id).await {
+                    warn!(%error, "a message was not pinned");
+                }
+            }
             for old in request.delete_message_ids.iter().filter(|old| **old != id) {
                 // Telegram refuses after 48 hours, or when the person already deleted it. A
                 // message that stays is no reason to show the text twice.
@@ -244,12 +261,12 @@ async fn delivery(
 }
 
 /// Shows the text, by an edit when asked and possible, and returns the id of the message that
-/// carries it.
-async fn show(sender: &dyn Deliver, request: &Request) -> Result<i64, SendError> {
+/// carries it and whether it was sent anew.
+async fn show(sender: &dyn Deliver, request: &Request) -> Result<(i64, bool), SendError> {
     let (chat, thread, text) = (request.chat_id, request.message_thread_id, &request.text);
     if let Some(id) = request.edit_message_id {
         match sender.edit(chat, id, text).await {
-            Ok(()) => return Ok(id),
+            Ok(()) => return Ok((id, false)),
             // Gone, deleted by the person, or otherwise not editable: the text is sent anew and
             // the answer carries the new id.
             Err(SendError::Rejected(reason)) => {
@@ -258,7 +275,8 @@ async fn show(sender: &dyn Deliver, request: &Request) -> Result<i64, SendError>
             Err(error) => return Err(error),
         }
     }
-    sender.post(chat, thread, text, request.silent).await
+    let id = sender.post(chat, thread, text, request.silent).await?;
+    Ok((id, true))
 }
 
 fn accepted(key: &str, message_id: i64) -> Response {
