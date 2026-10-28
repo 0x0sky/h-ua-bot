@@ -55,6 +55,10 @@ and, when the source calls a threat off (never on its own when a report merely l
 | `/status` | What the bot knows about you |
 | `/stop` | Delete your subscription and position |
 
+The same commands are in Telegram's menu, set with `setMyCommands` on every start, and every reply
+carries a keyboard that stays under the input field: 📍 Оновити позицію, 🛡 Стан, ⚙️ Що стежити,
+❓ Довідка. An empty chat shows what the bot is before the first `/start`.
+
 Four equal configured public Telegram sources are
 [@vanek_nikolaev](https://t.me/vanek_nikolaev),
 [@kpszsu](https://t.me/kpszsu),

@@ -28,7 +28,34 @@ pub const CLIENT_NAME: &str = "telegram";
 const LONG_POLL_SECS: u64 = 30;
 
 /// Label of the button that shares a position.
-const LOCATION_BUTTON: &str = "📍 Поділитися позицією";
+const LOCATION_BUTTON: &str = "📍 Оновити позицію";
+
+/// The buttons under the input field, and the command each one stands for. Telegram sends a
+/// button's label as plain text, so the label is matched back to the command.
+const MENU_BUTTONS: [(&str, &str); 3] = [
+    ("🛡 Стан", "status"),
+    ("⚙️ Що стежити", "kinds"),
+    ("❓ Довідка", "help"),
+];
+
+/// The command menu, in the order a person needs it.
+const COMMANDS: [(&str, &str); 6] = [
+    ("location", "📍 Оновити позицію"),
+    ("status", "🛡 Що я стежу для вас"),
+    ("kinds", "⚙️ Які загрози: дрони, КАБи, ракети"),
+    ("nearby", "🧭 Загрози поруч: так чи ні"),
+    ("help", "❓ Як це працює"),
+    ("stop", "🗑 Видалити підписку й позицію"),
+];
+
+/// What the bot is, shown in an empty chat before /start.
+const DESCRIPTION: &str = "Повідомляю про повітряні загрози лише для вашої зони: дрони, КАБи, ракети.\n\n\
+Одне табло оновлюється на місці, а статус дзвонить лише тоді, коли небезпека ближчає.\n\n\
+Позицію зберігаю як клітинку близько 3 км, не точні координати.\n\n\
+Неофіційний сервіс: орієнтуйтесь на офіційні сповіщення про тривогу.";
+
+/// The line under the bot's name in search and in its profile.
+const SHORT_DESCRIPTION: &str = "Повітряні загрози лише для вашої зони. Без спаму. Неофіційно.";
 
 /// Telegram, over a [`Transport`].
 pub struct TelegramClient<T> {
@@ -71,6 +98,30 @@ impl<T: Transport> TelegramClient<T> {
 }
 
 impl<T: Transport> TelegramClient<T> {
+    /// Sets what a person sees before typing anything: the command menu and the bot's
+    /// description. Telegram keeps them, so calling this on every start is enough.
+    pub async fn set_up_profile(&self) -> Result<(), SendError> {
+        let commands: Vec<Value> = COMMANDS
+            .iter()
+            .map(|(command, description)| json!({"command": command, "description": description}))
+            .collect();
+        self.call_for_message("setMyCommands", &json!({"commands": commands}))
+            .await?;
+        self.call_for_message(
+            "setChatMenuButton",
+            &json!({"menu_button": {"type": "commands"}}),
+        )
+        .await?;
+        self.call_for_message("setMyDescription", &json!({"description": DESCRIPTION}))
+            .await?;
+        self.call_for_message(
+            "setMyShortDescription",
+            &json!({"short_description": SHORT_DESCRIPTION}),
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Sends text to a chat, and to a topic in it when `thread_id` is given, and returns the id
     /// Telegram gave the message. This is what the hub's delivery endpoint uses.
     pub async fn deliver(
@@ -129,13 +180,7 @@ impl<T: Transport> TelegramClient<T> {
         ask_location: bool,
     ) -> Result<Option<i64>, SendError> {
         let mut body = message_body(chat, thread_id, text);
-        if ask_location {
-            body["reply_markup"] = json!({
-                "keyboard": [[{"text": LOCATION_BUTTON, "request_location": true}]],
-                "resize_keyboard": true,
-                "one_time_keyboard": true,
-            });
-        }
+        body["reply_markup"] = menu(ask_location);
         self.call_for_message("sendMessage", &body).await
     }
 
@@ -157,6 +202,26 @@ impl<T: Transport> TelegramClient<T> {
             .and_then(|message| message.get("message_id"))
             .and_then(Value::as_i64))
     }
+}
+
+/// The keyboard every reply in a conversation carries, so what the bot can do is always one tap
+/// away. Alerts arrive through [`TelegramClient::post`] without one, and the keyboard stays.
+fn menu(ask_location: bool) -> Value {
+    let row: Vec<Value> = MENU_BUTTONS
+        .iter()
+        .map(|(label, _)| json!({"text": label}))
+        .collect();
+    let placeholder = if ask_location {
+        "Натисніть 📍, щоб поділитися позицією"
+    } else {
+        "Команда або кнопка нижче"
+    };
+    json!({
+        "keyboard": [[{"text": LOCATION_BUTTON, "request_location": true}], row],
+        "resize_keyboard": true,
+        "is_persistent": true,
+        "input_field_placeholder": placeholder,
+    })
 }
 
 fn message_body(chat: Value, thread_id: Option<i64>, text: &str) -> Value {
@@ -252,6 +317,15 @@ fn event_from(update: Update) -> Option<Event> {
         return None;
     }
     let text = message.text?;
+    if let Some((_, command)) = MENU_BUTTONS.iter().find(|(label, _)| *label == text.trim()) {
+        return Some(Event {
+            from,
+            kind: EventKind::Command {
+                name: (*command).to_owned(),
+                args: String::new(),
+            },
+        });
+    }
     let kind = match text.strip_prefix('/') {
         Some(rest) => {
             let (word, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
@@ -521,7 +595,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_alert_is_plain_text_without_a_keyboard_or_a_preview() {
+    async fn a_reply_is_plain_text_with_the_menu_and_without_a_preview() {
         let (fake, script) = Fake::answering(vec![ok()]);
         TelegramClient::new(fake)
             .send(
@@ -540,7 +614,58 @@ mod tests {
             None,
             "no markup, so nothing to escape"
         );
-        assert_eq!(calls[0].1.get("reply_markup"), None);
+        let markup = &calls[0].1["reply_markup"];
+        assert_eq!(markup["is_persistent"], true);
+        assert_eq!(markup.get("one_time_keyboard"), None);
+        assert_eq!(markup["keyboard"][1][0]["text"], "🛡 Стан");
+    }
+
+    #[tokio::test]
+    async fn the_menu_buttons_are_read_as_their_commands() {
+        let events = heard(json!([
+            private(1, 42, json!({"text": "🛡 Стан"})),
+            private(2, 42, json!({"text": "⚙️ Що стежити"})),
+            private(3, 42, json!({"text": "❓ Довідка"})),
+        ]))
+        .await;
+        let names: Vec<String> = events
+            .into_iter()
+            .map(|event| match event.kind {
+                EventKind::Command { name, args } => {
+                    assert!(args.is_empty());
+                    name
+                }
+                other => panic!("not a command: {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, ["status", "kinds", "help"]);
+    }
+
+    #[tokio::test]
+    async fn the_profile_sets_the_command_menu_and_the_description() {
+        let (fake, script) = Fake::answering(vec![
+            Ok(json!({"ok": true, "result": true})),
+            Ok(json!({"ok": true, "result": true})),
+            Ok(json!({"ok": true, "result": true})),
+            Ok(json!({"ok": true, "result": true})),
+        ]);
+        TelegramClient::new(fake).set_up_profile().await.unwrap();
+        let calls = script.calls.lock().unwrap();
+        let methods: Vec<&str> = calls.iter().map(|(method, _)| method.as_str()).collect();
+        assert_eq!(
+            methods,
+            [
+                "setMyCommands",
+                "setChatMenuButton",
+                "setMyDescription",
+                "setMyShortDescription"
+            ]
+        );
+        let commands = calls[0].1["commands"].as_array().unwrap();
+        assert_eq!(commands[0]["command"], "location");
+        assert!(commands.iter().any(|c| c["command"] == "stop"));
+        assert!(DESCRIPTION.chars().count() <= 512);
+        assert!(SHORT_DESCRIPTION.chars().count() <= 120);
     }
 
     #[tokio::test]
@@ -555,7 +680,10 @@ mod tests {
             .unwrap();
         let markup = script.calls.lock().unwrap()[0].1["reply_markup"].clone();
         assert_eq!(markup["keyboard"][0][0]["request_location"], true);
-        assert_eq!(markup["one_time_keyboard"], true);
+        assert_eq!(
+            markup["input_field_placeholder"],
+            "Натисніть 📍, щоб поділитися позицією"
+        );
     }
 
     async fn failing_with(answer: Result<Value, TransportError>) -> SendError {
