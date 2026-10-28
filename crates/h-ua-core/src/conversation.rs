@@ -170,8 +170,12 @@ impl<'a> Conversation<'a> {
             Err(reply) => return Ok(reply),
         };
         match args.trim().to_lowercase().as_str() {
-            "on" | "так" | "вкл" | "увімк" => subscription.include_nearby = true,
-            "off" | "ні" | "викл" | "вимк" => subscription.include_nearby = false,
+            "on" | "yes" | "так" | "да" | "вкл" | "увімк" => {
+                subscription.include_nearby = true
+            }
+            "off" | "no" | "ні" | "нет" | "викл" | "выкл" | "вимк" => {
+                subscription.include_nearby = false
+            }
             _ => return Ok(vec![settings(copy, &subscription, None)]),
         }
         self.subscriptions.save(&subscription).await?;

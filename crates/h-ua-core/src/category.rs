@@ -41,15 +41,18 @@ impl Category {
         let word = word.trim().to_lowercase();
         let word = word.trim_matches(|c: char| !c.is_alphanumeric());
         match word {
-            "дрон" | "дрони" | "бпла" | "шахед" | "шахеди" | "мопед" | "мопеди" | "drone" => {
-                Some(Self::Drone)
-            }
-            "каб" | "каби" | "кабы" | "бомба" | "бомби" | "bomb" => {
+            "дрон" | "дрони" | "дроны" | "бпла" | "шахед" | "шахеди" | "мопед" | "мопеди"
+            | "drone" | "drones" => Some(Self::Drone),
+            "каб" | "каби" | "кабы" | "бомба" | "бомби" | "бомбы" | "bomb" | "bombs" => {
                 Some(Self::Bomb)
             }
-            "ракета" | "ракети" | "ракеты" | "балістика" | "баллистика" | "missile" => {
-                Some(Self::Missile)
-            }
+            "ракета"
+            | "ракети"
+            | "ракеты"
+            | "балістика"
+            | "баллистика"
+            | "missile"
+            | "missiles" => Some(Self::Missile),
             _ => None,
         }
     }

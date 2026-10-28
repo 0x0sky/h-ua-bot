@@ -327,3 +327,34 @@ async fn replies_are_marked_with_the_language_they_answer() {
         );
     }
 }
+
+#[tokio::test]
+async fn russian_and_english_speakers_are_answered_in_their_language() {
+    let chat = Chat::new();
+    let at = |locale, event: Event| Event { locale, ..event };
+    let help = chat.say(&at(Locale::En, command("help", ""))).await;
+    assert!(help[0].text.contains("unofficial service"));
+    assert!(help[0].text.contains("⚙️ What to follow?"));
+
+    chat.say(&at(Locale::Ru, location(50.40, 30.60, false)))
+        .await;
+    let panel = &chat.say(&at(Locale::Ru, command("kinds", ""))).await[0];
+    assert!(panel.text.starts_with("⚙️ За чем следить?"));
+    assert_eq!(
+        labels(panel),
+        [
+            vec!["✅ Дроны", "✅ КАБы", "✅ Ракеты"],
+            vec!["✅ Угрозы рядом"]
+        ]
+    );
+    let off = chat.say(&at(Locale::Ru, command("nearby", "нет"))).await;
+    assert!(off[0].text.contains("выключено"));
+    assert!(!chat.saved().await.unwrap().include_nearby);
+
+    let status = chat.say(&at(Locale::En, command("status", ""))).await;
+    assert!(status[0].text.contains("Threats nearby: no"));
+    let chosen = chat
+        .say(&at(Locale::En, command("kinds", "drones missiles")))
+        .await;
+    assert_eq!(chosen[0].text, "OK, following: drones, missiles.");
+}
