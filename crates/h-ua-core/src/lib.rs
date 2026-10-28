@@ -13,6 +13,7 @@
 pub mod category;
 pub mod conversation;
 pub mod geo;
+pub mod locale;
 pub mod memory;
 pub mod message;
 pub mod ports;
