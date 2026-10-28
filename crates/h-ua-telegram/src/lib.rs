@@ -920,7 +920,11 @@ mod tests {
         let sent = |id| Ok(json!({"ok": true, "result": {"message_id": id}}));
         let (fake, script) = Fake::answering(vec![
             sent(77),
-            Ok(updates(json!([private(1, 42, json!({"message_id": 80, "text": "✅ Дрони"}))]))),
+            Ok(updates(json!([private(
+                1,
+                42,
+                json!({"message_id": 80, "text": "✅ Дрони"})
+            )]))),
             sent(81),
             Ok(json!({"ok": true, "result": true})),
             Ok(json!({"ok": true, "result": true})),
@@ -969,7 +973,10 @@ mod tests {
         let client = TelegramClient::new(fake);
         let me = Recipient::new("telegram", "42");
         client.send(&me, &panel).await.unwrap();
-        client.send(&me, &Message::text("Головне меню")).await.unwrap();
+        client
+            .send(&me, &Message::text("Головне меню"))
+            .await
+            .unwrap();
         let events = client.poll().await.unwrap();
         assert!(matches!(events[0].kind, EventKind::Other));
         assert_eq!(
@@ -981,7 +988,10 @@ mod tests {
         );
         let calls = script.calls.lock().unwrap();
         assert!(calls[1].1["reply_markup"].get("keyboard").is_some());
-        assert_eq!(calls[1].1["reply_markup"]["keyboard"][1][1]["text"], "⚙️ За чим стежити?");
+        assert_eq!(
+            calls[1].1["reply_markup"]["keyboard"][1][1]["text"],
+            "⚙️ За чим стежити?"
+        );
     }
 
     #[tokio::test]
