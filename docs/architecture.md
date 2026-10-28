@@ -22,12 +22,12 @@
 The bot is a **client**. It turns Telegram into hub API calls and hub deliveries into Telegram
 messages, and holds no subscription, source, or alert logic.
 
-Its public `Source` descriptors (`id`, `kind`, `label`) are presentation metadata only:
-`HUA_SOURCES_JSON` allows names for APIs, RSS, websites, and partner webhooks alongside Telegram
-channels, while legacy `HUA_SOURCES` continues to work. Neither setting provisions collection.
-Only list activated upstreams; source provenance, authority, deduplication, and retraction
-remain owned by Prism Hub and `prism-signal`. The client must not infer an all-clear from
-the absence of reports, including API timeouts or stale feeds.
+Legacy `Source` descriptors and `HUA_SOURCES` / `HUA_SOURCES_JSON` are accepted
+for runtime compatibility, but they are **not displayed** in any chat reply. They
+do not provision collection. Input provenance, authority, deduplication, and
+retraction remain internal responsibilities of Prism Hub and Prism Signal.
+The client must not infer an all-clear from silence, including API timeouts
+or stale feeds.
 
 Two things flow through the bot:
 
@@ -119,8 +119,9 @@ A false all-clear is the worst message this can send. The guards live where the 
    retraction.
 3. **The hub** sends an expiry as nothing, and a retraction only to people who were told the
    alert, naming other reports that still cover them.
-4. **Porter** words a retraction as "the source wrote that the threat was called off", says it is
-   not official, and never says a place is safe.
+4. **Porter** words a retraction as an update to a previous warning, explicitly
+   disclaims official all-clear, and never says a place is safe. It does not
+   display source names, IDs, or links in recipient messages.
 5. **This bot** adds the standing notice to its welcome and `/status`: unofficial, and no message
    does not mean safe.
 
@@ -131,8 +132,8 @@ A false all-clear is the worst message this can send. The guards live where the 
   next one retries.
 - **The hub is unreachable** when it should deliver. The hub's outbox retries.
 - **The bot is down.** Deliveries fail and the hub retries them until its own limits.
-- **The source goes quiet.** The hub logs it and users are not told. Silence from the bot is not
-  safety, and the welcome says so.
+- **An input feed goes quiet.** The hub logs it without creating a user-visible
+  all-clear. Silence from the bot is not safety, and the welcome says so.
 
 ## Known limits
 
@@ -147,6 +148,7 @@ A false all-clear is the worst message this can send. The guards live where the 
 - **Deliveries are sequential.** At about a tenth of a second per message, a thousand people is
   minutes. Bounded concurrency under Telegram's rate limit is the first thing to add before the
   audience grows.
-- **A source can be wrong, late, or silent.** Every message says so.
+- **Reports can be wrong, late, or missing.** The standing unofficial-service
+  warning explains that silence is not safety without naming individual feeds.
 - **Telegram is not tested live** from the development environment, which cannot reach the Bot
   API. The client is tested against a scripted transport.
