@@ -56,6 +56,11 @@ The same commands are in Telegram's menu, set with `setMyCommands` on every star
 carries a keyboard that stays under the input field: 📍 Оновити позицію, 🛡 Стан, ⚙️ Що стежити,
 ❓ Довідка. An empty chat shows what the bot is before the first `/start`.
 
+The chat stays tidy. The bot keeps one reply of its own: each new reply deletes the previous one,
+and the command, button or text it answers. The position shared last stays; a new one replaces it.
+The hub's board and status are left to the hub. The bot remembers these message ids in memory, so
+after a restart one old message per chat may stay.
+
 For a non-delivering production auth/routing test before any controlled
 live-chat verification, see [the deployment handshake](docs/production-deploy.md).
 

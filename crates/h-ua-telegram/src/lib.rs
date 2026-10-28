@@ -9,6 +9,7 @@
 
 mod transport;
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -61,6 +62,23 @@ pub struct TelegramClient<T> {
     transport: T,
     /// The `offset` for the next `getUpdates`: one past the last update handled.
     next_offset: Mutex<Option<i64>>,
+    /// What each chat shows besides the hub's board and status, so a reply can tidy it.
+    screens: Mutex<HashMap<i64, Screen>>,
+}
+
+/// The bot keeps a chat to what matters: the position the person shared last, the hub's board
+/// and status, and one message from the bot. Everything else it sent or was sent is cleared.
+///
+/// Kept in memory: after a restart the bot forgets one old message per chat, which then stays.
+#[derive(Default)]
+struct Screen {
+    /// The bot's one conversation message: the last reply.
+    system: Option<i64>,
+    /// The position the person shared last.
+    location: Option<i64>,
+    /// What the person sent that the next reply makes redundant: commands, button taps, text,
+    /// and a position they have since replaced.
+    stale: Vec<i64>,
 }
 
 impl<T: Transport> TelegramClient<T> {
@@ -69,6 +87,7 @@ impl<T: Transport> TelegramClient<T> {
         Self {
             transport,
             next_offset: Mutex::new(None),
+            screens: Mutex::new(HashMap::new()),
         }
     }
 
@@ -182,6 +201,7 @@ impl<T: Transport> TelegramClient<T> {
     }
 
     async fn send_message(&self, chat: Value, message: &Message) -> Result<(), SendError> {
+        let chat_number = chat.as_i64();
         let mut body = message_body(chat, None, &message.text);
         let replaces = message
             .replaces
@@ -204,9 +224,49 @@ impl<T: Transport> TelegramClient<T> {
             // The keyboard under the input field stays: an inline one does not replace it.
             buttons(&message.choices)
         };
-        self.call_for_message("sendMessage", &body)
-            .await
-            .map(|_| ())
+        let sent = self.call_for_message("sendMessage", &body).await?;
+        if let (Some(chat), Some(sent)) = (chat_number, sent) {
+            self.tidy(chat, sent).await;
+        }
+        Ok(())
+    }
+
+    /// Remembers what a person sent, so the reply to it can clear it away.
+    fn note(&self, message: &Incoming) {
+        if message.message_id == 0 {
+            return;
+        }
+        let Ok(mut screens) = self.screens.lock() else {
+            return;
+        };
+        let screen = screens.entry(message.chat.id).or_default();
+        if message.location.is_some() {
+            // The newest position stays on screen; the one it replaces goes.
+            if let Some(old) = screen.location.replace(message.message_id) {
+                screen.stale.push(old);
+            }
+        } else {
+            screen.stale.push(message.message_id);
+        }
+    }
+
+    /// After a reply: the previous reply and what the person sent before it are deleted.
+    async fn tidy(&self, chat: i64, sent: i64) {
+        let doomed = {
+            let Ok(mut screens) = self.screens.lock() else {
+                return;
+            };
+            let screen = screens.entry(chat).or_default();
+            let mut doomed = std::mem::take(&mut screen.stale);
+            doomed.extend(screen.system.replace(sent));
+            doomed
+        };
+        for message_id in doomed {
+            // Best effort: Telegram refuses after 48 hours, and a person may delete first.
+            if let Err(error) = self.delete(chat, message_id).await {
+                debug!(%error, message_id, "could not clear a message");
+            }
+        }
     }
 
     /// Stops the spinner on a tapped button. Telegram shows it until this is called.
@@ -330,6 +390,8 @@ struct Tapped {
 
 #[derive(Deserialize)]
 struct Incoming {
+    #[serde(default)]
+    message_id: i64,
     chat: Chat,
     from: Option<Sender>,
     text: Option<String>,
@@ -498,6 +560,14 @@ impl<T: Transport> Messenger for TelegramClient<T> {
             .collect();
         for query in &queries {
             self.acknowledge(query).await;
+        }
+        for update in &updates {
+            if let Some(message) = &update.message {
+                let from_bot = message.from.as_ref().is_some_and(|s| s.is_bot);
+                if message.chat.kind == "private" && !from_bot {
+                    self.note(message);
+                }
+            }
         }
         Ok(updates.into_iter().filter_map(event_from).collect())
     }
@@ -812,6 +882,62 @@ mod tests {
             calls[1].1["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
             "toggle:drone"
         );
+    }
+
+    #[tokio::test]
+    async fn a_reply_clears_what_it_answered_and_the_reply_before_it() {
+        let sent = |id: i64| Ok(json!({"ok": true, "result": {"message_id": id}}));
+        let deleted = || Ok(json!({"ok": true, "result": true}));
+        let (fake, script) = Fake::answering(vec![
+            Ok(updates(json!([private(
+                1,
+                42,
+                json!({"message_id": 10, "location": {"latitude": 50.4, "longitude": 30.6}})
+            ),]))),
+            sent(11),
+            Ok(updates(json!([private(
+                2,
+                42,
+                json!({"message_id": 12, "text": "🛡 Стан"})
+            ),]))),
+            sent(13),
+            deleted(),
+            deleted(),
+            Ok(updates(json!([private(
+                3,
+                42,
+                json!({"message_id": 14, "location": {"latitude": 50.5, "longitude": 30.6}})
+            ),]))),
+            sent(15),
+            deleted(),
+            deleted(),
+        ]);
+        let client = TelegramClient::new(fake);
+        let me = Recipient::new("telegram", "42");
+        client.poll().await.unwrap();
+        client
+            .send(&me, &Message::text("Позицію збережено"))
+            .await
+            .unwrap();
+        client.poll().await.unwrap();
+        client
+            .send(&me, &Message::text("Позиція: Київ"))
+            .await
+            .unwrap();
+        client.poll().await.unwrap();
+        client
+            .send(&me, &Message::text("Позицію збережено"))
+            .await
+            .unwrap();
+
+        let calls = script.calls.lock().unwrap();
+        let deletions: Vec<i64> = calls
+            .iter()
+            .filter(|(method, _)| method == "deleteMessage")
+            .map(|(_, body)| body["message_id"].as_i64().unwrap())
+            .collect();
+        // The first position stays until a new one comes; the tap and each old reply go.
+        assert_eq!(deletions, [12, 11, 10, 13]);
     }
 
     #[tokio::test]
