@@ -1,8 +1,8 @@
 // © 2026 aiaiaiai · aiaiaiai.org
 // SPDX-License-Identifier: MIT
 
-//! What the bot says in conversation. All copy is here, in Ukrainian, so it can be reviewed in one
-//! place. Alerts are not here: the hub composes them and Porter renders them.
+//! What the bot says in conversation, before a messenger formats it. The copy itself is in
+//! [`copy`](crate::copy). Alerts are not here: the hub composes them and Porter renders them.
 
 /// A message to a person, before any messenger formats it.
 ///
@@ -72,22 +72,9 @@ impl Message {
     }
 }
 
-/// The notice that must accompany every welcome: what this is and is not.
-pub const NOT_OFFICIAL: &str = "⚠️ Це неофіційний сервіс. Повідомлення бота не замінюють офіційного оповіщення. Відсутність повідомлення не означає безпеку. Орієнтуйтесь на офіційні сповіщення про повітряну тривогу.";
-
-/// The privacy statement shown with the welcome.
-pub const PRIVACY: &str = "🔒 Позицію зберігаю лише як грубу клітинку близько 3 км, а не точні координати. Разом із нею зберігається технічний ідентифікатор вашого чату. /stop видаляє підписку й позицію.";
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_disclaimers_say_the_two_things_that_matter() {
-        assert!(NOT_OFFICIAL.contains("неофіційний сервіс"));
-        assert!(NOT_OFFICIAL.contains("не означає безпеку"));
-        assert!(PRIVACY.contains("не точні координати"));
-    }
 
     #[test]
     fn a_message_can_ask_for_a_position() {

@@ -8,8 +8,9 @@ use std::collections::BTreeSet;
 use prism_signal_normalize::{Gazetteer, Place};
 
 use crate::category::Category;
+use crate::copy::{Copy, fill};
 use crate::geo::Cell;
-use crate::message::{Choice, Message, NOT_OFFICIAL, PRIVACY};
+use crate::message::{Choice, Message};
 use crate::ports::{Event, EventKind, SubscriptionError, Subscriptions};
 use crate::subscriber::Subscription;
 
@@ -33,67 +34,49 @@ impl<'a> Conversation<'a> {
 
     /// Handles one event and returns the replies, in order.
     pub async fn handle(&self, event: &Event) -> Result<Vec<Message>, SubscriptionError> {
+        let copy = Copy::of(event.locale);
         match &event.kind {
-            EventKind::Command { name, args } => self.command(event, name, args).await,
-            EventKind::Location { lat, lon, live } => self.location(event, *lat, *lon, *live).await,
-            EventKind::Choice { data, message } => self.choice(event, data, message).await,
-            EventKind::Other => Ok(vec![Message::text(
-                "Я розумію команди та позицію. Надішліть /help, щоб побачити, що вмію.",
-            )]),
+            EventKind::Command { name, args } => self.command(event, copy, name, args).await,
+            EventKind::Location { lat, lon, live } => {
+                self.location(event, copy, *lat, *lon, *live).await
+            }
+            EventKind::Choice { data, message } => self.choice(event, copy, data, message).await,
+            EventKind::Other => Ok(vec![Message::text(copy.other)]),
         }
     }
 
     async fn command(
         &self,
         event: &Event,
+        copy: &Copy,
         name: &str,
         args: &str,
     ) -> Result<Vec<Message>, SubscriptionError> {
         match name {
-            "start" | "help" => Ok(vec![self.welcome()]),
-            "location" => Ok(vec![Message::asking_location(
-                "Натисніть кнопку нижче, щоб поділитися позицією. Якщо поділитеся «живою» позицією, я оновлюватиму її, поки ви рухаєтесь.",
-            )]),
-            "kinds" => self.kinds(event, args).await,
-            "menu" => Ok(vec![Message::text("Головне меню")]),
-            "nearby" => self.nearby(event, args).await,
-            "status" => self.status(event).await,
+            "start" | "help" => Ok(vec![welcome(copy)]),
+            "location" => Ok(vec![Message::asking_location(copy.location_prompt)]),
+            "kinds" => self.kinds(event, copy, args).await,
+            "menu" => Ok(vec![Message::text(copy.menu)]),
+            "nearby" => self.nearby(event, copy, args).await,
+            "status" => self.status(event, copy).await,
             "stop" => {
                 self.subscriptions.delete(&event.from).await?;
-                Ok(vec![Message::text(
-                    "Готово: підписку й позицію видалено, повідомлень більше не буде. Технічний ідентифікатор чату лишається в системі, але без підписки нічого не надсилається. Щоб повернутись, надішліть /start і поділіться позицією.",
-                )])
+                Ok(vec![Message::text(copy.stopped)])
             }
-            _ => Ok(vec![Message::text(
-                "Не знаю такої команди. Надішліть /help, щоб побачити, що вмію.",
-            )]),
+            _ => Ok(vec![Message::text(copy.unknown_command)]),
         }
-    }
-
-    fn welcome(&self) -> Message {
-        Message::asking_location(format!(
-            "Я повідомляю про повітряні загрози біля вас: дрони, КАБи, ракети. Лише про ті, що стосуються вашого місця.\n\n\
-             Як це працює: ви ділитесь позицією, система обробляє повідомлення про загрози, а я надсилаю лише те, що стосується вашої околиці.\n\n\
-             {NOT_OFFICIAL}\n\n{PRIVACY}\n\n\
-             Кнопки під полем вводу:\n\
-             📍 Оновити позицію\n\
-             🛡 Стан — що я про вас знаю\n\
-             ⚙️ За чим стежити? — дрони, КАБи, ракети, загрози поруч\n\
-             /stop — видалити все"
-        ))
     }
 
     async fn location(
         &self,
         event: &Event,
+        copy: &Copy,
         lat: f64,
         lon: f64,
         live: bool,
     ) -> Result<Vec<Message>, SubscriptionError> {
         let Ok(cell) = Cell::around(lat, lon) else {
-            return Ok(vec![Message::text(
-                "Не можу прочитати цю позицію. Спробуйте ще раз.",
-            )]);
+            return Ok(vec![Message::text(copy.bad_location)]);
         };
         // The choices already made are kept when the position moves.
         let existing = self.subscriptions.get(&event.from).await?;
@@ -109,10 +92,12 @@ impl<'a> Conversation<'a> {
             // A live position updates in silence: a message per movement would be spam.
             return Ok(Vec::new());
         }
-        Ok(vec![Message::text(format!(
-            "Позицію збережено. {}\nТочних координат я не зберігаю, лише клітинку близько 3 км.\n\nЗараз стежу за: {}. Змінити: ⚙️ За чим стежити?",
-            self.near(cell),
-            describe(&subscription.categories),
+        Ok(vec![Message::text(fill(
+            copy.saved,
+            &[
+                ("near", &self.near(copy, cell)),
+                ("kinds", &describe(copy, &subscription.categories)),
+            ],
         ))])
     }
 
@@ -120,16 +105,22 @@ impl<'a> Conversation<'a> {
     async fn subscription_or_ask(
         &self,
         event: &Event,
+        copy: &Copy,
     ) -> Result<Result<Subscription, Vec<Message>>, SubscriptionError> {
-        Ok(self.subscriptions.get(&event.from).await?.ok_or_else(|| {
-            vec![Message::asking_location(
-                "Спершу поділіться позицією: без неї я не знаю, що вас стосується.",
-            )]
-        }))
+        Ok(self
+            .subscriptions
+            .get(&event.from)
+            .await?
+            .ok_or_else(|| vec![Message::asking_location(copy.position_first)]))
     }
 
-    async fn kinds(&self, event: &Event, args: &str) -> Result<Vec<Message>, SubscriptionError> {
-        let mut subscription = match self.subscription_or_ask(event).await? {
+    async fn kinds(
+        &self,
+        event: &Event,
+        copy: &Copy,
+        args: &str,
+    ) -> Result<Vec<Message>, SubscriptionError> {
+        let mut subscription = match self.subscription_or_ask(event, copy).await? {
             Ok(subscription) => subscription,
             Err(reply) => return Ok(reply),
         };
@@ -138,7 +129,7 @@ impl<'a> Conversation<'a> {
             .filter(|word| !word.is_empty())
             .collect();
         if words.is_empty() {
-            return Ok(vec![settings(&subscription, None)]);
+            return Ok(vec![settings(copy, &subscription, None)]);
         }
         let mut chosen = BTreeSet::new();
         for word in &words {
@@ -147,52 +138,64 @@ impl<'a> Conversation<'a> {
                     chosen.insert(category);
                 }
                 None => {
-                    return Ok(vec![Message::text(format!(
-                        "Не розумію «{word}». Доступні види: дрони, каби, ракети."
+                    return Ok(vec![Message::text(fill(
+                        copy.unknown_kind,
+                        &[("word", word)],
                     ))]);
                 }
             }
         }
         subscription.categories = chosen;
         self.subscriptions.save(&subscription).await?;
-        Ok(vec![Message::text(format!(
-            "Гаразд, стежу за: {}.",
-            describe(&subscription.categories)
+        Ok(vec![Message::text(fill(
+            copy.following,
+            &[("kinds", &describe(copy, &subscription.categories))],
         ))])
     }
 
-    async fn nearby(&self, event: &Event, args: &str) -> Result<Vec<Message>, SubscriptionError> {
-        let mut subscription = match self.subscription_or_ask(event).await? {
+    async fn nearby(
+        &self,
+        event: &Event,
+        copy: &Copy,
+        args: &str,
+    ) -> Result<Vec<Message>, SubscriptionError> {
+        let mut subscription = match self.subscription_or_ask(event, copy).await? {
             Ok(subscription) => subscription,
             Err(reply) => return Ok(reply),
         };
         match args.trim().to_lowercase().as_str() {
             "on" | "так" | "вкл" | "увімк" => subscription.include_nearby = true,
             "off" | "ні" | "викл" | "вимк" => subscription.include_nearby = false,
-            _ => return Ok(vec![settings(&subscription, None)]),
+            _ => return Ok(vec![settings(copy, &subscription, None)]),
         }
         self.subscriptions.save(&subscription).await?;
-        Ok(vec![Message::text(format!(
-            "Попередження про загрози поруч: {}.",
-            on_off(subscription.include_nearby)
+        let state = if subscription.include_nearby {
+            copy.on
+        } else {
+            copy.off
+        };
+        Ok(vec![Message::text(fill(
+            copy.nearby_set,
+            &[("state", state)],
         ))])
     }
 
-    async fn status(&self, event: &Event) -> Result<Vec<Message>, SubscriptionError> {
+    async fn status(&self, event: &Event, copy: &Copy) -> Result<Vec<Message>, SubscriptionError> {
         let Some(subscription) = self.subscriptions.get(&event.from).await? else {
-            return Ok(vec![Message::asking_location(
-                "Я ще нічого про вас не знаю. Поділіться позицією, і я почну стежити.",
-            )]);
+            return Ok(vec![Message::asking_location(copy.nothing_known)]);
         };
-        Ok(vec![Message::text(format!(
-            "Позиція: {}\nВиди: {}\nЗагрози поруч: {}",
-            self.near(subscription.cell),
-            describe(&subscription.categories),
-            if subscription.include_nearby {
-                "так"
-            } else {
-                "ні"
-            },
+        let nearby = if subscription.include_nearby {
+            copy.yes
+        } else {
+            copy.no
+        };
+        Ok(vec![Message::text(fill(
+            copy.status,
+            &[
+                ("near", &self.near(copy, subscription.cell)),
+                ("kinds", &describe(copy, &subscription.categories)),
+                ("nearby", nearby),
+            ],
         ))])
     }
 
@@ -200,10 +203,11 @@ impl<'a> Conversation<'a> {
     async fn choice(
         &self,
         event: &Event,
+        copy: &Copy,
         data: &str,
         message: &str,
     ) -> Result<Vec<Message>, SubscriptionError> {
-        let mut subscription = match self.subscription_or_ask(event).await? {
+        let mut subscription = match self.subscription_or_ask(event, copy).await? {
             Ok(subscription) => subscription,
             Err(reply) => return Ok(reply),
         };
@@ -219,7 +223,7 @@ impl<'a> Conversation<'a> {
                 } else if subscription.categories.is_empty() {
                     // Following nothing is a subscription that never speaks; /stop is for that.
                     subscription.categories.insert(category);
-                    note = Some("Хоча б один вид лишається. Щоб не отримувати нічого: /stop");
+                    note = Some(copy.keep_one);
                 }
             }
             None => return Ok(Vec::new()),
@@ -229,20 +233,26 @@ impl<'a> Conversation<'a> {
         }
         Ok(vec![
             // A reply-keyboard tap has no message to replace.
-            settings(&subscription, note)
+            settings(copy, &subscription, note)
                 .replacing(Some(message.to_owned()).filter(|id| !id.is_empty())),
         ])
     }
 
     /// `Найближче відоме місце: Київ.`, or nothing useful to say.
-    fn near(&self, cell: Cell) -> String {
+    fn near(&self, copy: &Copy, cell: Cell) -> String {
         match nearest(self.gazetteer, cell) {
-            Some(place) => format!("Найближче відоме місце: {}.", place.name),
-            None => {
-                "Поруч немає місць з мого словника, тож розпізнаю лише згадані міста.".to_owned()
-            }
+            Some(place) => fill(copy.near_place, &[("place", &place.name)]),
+            None => copy.no_place.to_owned(),
         }
     }
+}
+
+/// The welcome: what the bot does, the two notices, and the buttons.
+fn welcome(copy: &Copy) -> Message {
+    Message::asking_location(format!(
+        "{}\n\n{}\n\n{}\n\n{}",
+        copy.welcome, copy.not_official, copy.privacy, copy.welcome_buttons
+    ))
 }
 
 fn nearest(gazetteer: &Gazetteer, cell: Cell) -> Option<&Place> {
@@ -259,25 +269,27 @@ const TOGGLE: &str = "toggle:";
 const NEARBY: &str = "nearby";
 
 /// The settings panel: one button per thing to follow, each showing whether it is on.
-fn settings(subscription: &Subscription, note: Option<&str>) -> Message {
+fn settings(copy: &Copy, subscription: &Subscription, note: Option<&str>) -> Message {
     let mark = |on: bool| if on { "✅" } else { "▫️" };
     let kinds = Category::ALL
         .into_iter()
         .map(|category| {
             let on = subscription.categories.contains(&category);
             Choice::new(
-                format!("{} {}", mark(on), capitalised(category.label())),
+                format!("{} {}", mark(on), capitalised(copy.category(category))),
                 format!("{TOGGLE}{}", category.key()),
             )
         })
         .collect();
     let nearby = vec![Choice::new(
-        format!("{} Загрози поруч", mark(subscription.include_nearby)),
+        format!(
+            "{} {}",
+            mark(subscription.include_nearby),
+            copy.nearby_choice
+        ),
         format!("{TOGGLE}{NEARBY}"),
     )];
-    let mut text = "⚙️ За чим стежити?\n\nНатисніть, щоб увімкнути чи вимкнути.\n\
-                    «Поруч» — коли щось летить повз ваше місто або біля нього, а не на нього."
-        .to_owned();
+    let mut text = copy.settings.to_owned();
     if let Some(note) = note {
         text.push_str("\n\n");
         text.push_str(note);
@@ -293,21 +305,13 @@ fn capitalised(word: &str) -> String {
         .unwrap_or_default()
 }
 
-fn on_off(on: bool) -> &'static str {
-    if on {
-        "увімкнено"
-    } else {
-        "вимкнено"
-    }
-}
-
-fn describe(categories: &BTreeSet<Category>) -> String {
+fn describe(copy: &Copy, categories: &BTreeSet<Category>) -> String {
     if categories.is_empty() {
-        return "нічим".to_owned();
+        return copy.nothing.to_owned();
     }
     categories
         .iter()
-        .map(|c| c.label())
+        .map(|c| copy.category(*c))
         .collect::<Vec<_>>()
         .join(", ")
 }
