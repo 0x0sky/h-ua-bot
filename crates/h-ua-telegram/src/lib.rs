@@ -14,6 +14,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use h_ua_core::category::Category;
+use h_ua_core::locale::Locale;
 use h_ua_core::message::{Choice, Message};
 use h_ua_core::ports::{ClientError, Event, EventKind, Messenger, SendError};
 use h_ua_core::subscriber::Recipient;
@@ -404,6 +405,7 @@ struct Update {
 #[derive(Deserialize)]
 struct CallbackQuery {
     id: String,
+    from: Option<Sender>,
     data: Option<String>,
     message: Option<Tapped>,
 }
@@ -435,6 +437,16 @@ struct Chat {
 struct Sender {
     #[serde(default)]
     is_bot: bool,
+    /// The language of the person's Telegram app: `uk`, `ru`, sometimes with a region.
+    language_code: Option<String>,
+}
+
+/// The language to answer a sender in; Ukrainian when Telegram does not say.
+fn locale_of(sender: Option<&Sender>) -> Locale {
+    sender
+        .and_then(|sender| sender.language_code.as_deref())
+        .map(Locale::from_tag)
+        .unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -452,6 +464,7 @@ fn event_from(update: Update) -> Option<Event> {
         }
         return Some(Event {
             from: Recipient::new(CLIENT_NAME, tapped.chat.id.to_string()),
+            locale: locale_of(query.from.as_ref()),
             kind: EventKind::Choice {
                 data: query.data?,
                 message: tapped.message_id.to_string(),
@@ -467,9 +480,11 @@ fn event_from(update: Update) -> Option<Event> {
         return None;
     }
     let from = Recipient::new(CLIENT_NAME, message.chat.id.to_string());
+    let locale = locale_of(message.from.as_ref());
     if let Some(location) = message.location {
         return Some(Event {
             from,
+            locale,
             kind: EventKind::Location {
                 lat: location.latitude,
                 lon: location.longitude,
@@ -485,6 +500,7 @@ fn event_from(update: Update) -> Option<Event> {
     if text.trim() == BACK_BUTTON {
         return Some(Event {
             from,
+            locale,
             kind: EventKind::Command {
                 name: "menu".to_owned(),
                 args: String::new(),
@@ -494,6 +510,7 @@ fn event_from(update: Update) -> Option<Event> {
     if text.trim() == LEGACY_KINDS_BUTTON {
         return Some(Event {
             from,
+            locale,
             kind: EventKind::Command {
                 name: "kinds".to_owned(),
                 args: String::new(),
@@ -503,6 +520,7 @@ fn event_from(update: Update) -> Option<Event> {
     if let Some((_, command)) = MENU_BUTTONS.iter().find(|(label, _)| *label == text.trim()) {
         return Some(Event {
             from,
+            locale,
             kind: EventKind::Command {
                 name: (*command).to_owned(),
                 args: String::new(),
@@ -521,7 +539,7 @@ fn event_from(update: Update) -> Option<Event> {
         }
         None => EventKind::Other,
     };
-    Some(Event { from, kind })
+    Some(Event { from, locale, kind })
 }
 
 fn send_error(reply: &Reply<Value>) -> SendError {
@@ -720,6 +738,7 @@ mod tests {
             vec![
                 Event {
                     from: me.clone(),
+                    locale: Locale::Uk,
                     kind: EventKind::Command {
                         name: "start".into(),
                         args: "".into()
@@ -727,6 +746,7 @@ mod tests {
                 },
                 Event {
                     from: me.clone(),
+                    locale: Locale::Uk,
                     kind: EventKind::Command {
                         name: "kinds".into(),
                         args: "дрони   каби".into()
@@ -734,6 +754,7 @@ mod tests {
                 },
                 Event {
                     from: me,
+                    locale: Locale::Uk,
                     kind: EventKind::Other
                 },
             ]
@@ -897,6 +918,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_language_of_the_sender_is_carried_on_the_event() {
+        let tap = json!({"update_id": 9, "callback_query": {
+            "id": "q1", "data": "toggle:bomb",
+            "from": {"id": 42, "is_bot": false, "language_code": "ru-RU"},
+            "message": {"message_id": 77, "chat": {"id": 42, "type": "private"}}
+        }});
+        let said = |id, language: Value| {
+            let mut update = private(id, 42, json!({"text": "/status"}));
+            update["message"]["from"]["language_code"] = language;
+            update
+        };
+        let (fake, _) = Fake::answering(vec![
+            Ok(updates(json!([
+                said(1, json!("en")),
+                said(2, json!("ru")),
+                said(3, json!("uk-RU")),
+                said(4, Value::Null),
+                tap,
+            ]))),
+            Ok(json!({"ok": true, "result": true})),
+        ]);
+        let events = TelegramClient::new(fake).poll().await.unwrap();
+        let locales: Vec<Locale> = events.iter().map(|event| event.locale).collect();
+        assert_eq!(
+            locales,
+            [Locale::En, Locale::Uk, Locale::Ru, Locale::Uk, Locale::Ru]
+        );
+    }
+
+    #[tokio::test]
     async fn a_tapped_button_is_read_and_acknowledged() {
         let tap = json!({"update_id": 5, "callback_query": {
             "id": "q1", "data": "toggle:bomb",
@@ -918,6 +969,7 @@ mod tests {
             events,
             vec![Event {
                 from: Recipient::new("telegram", "42"),
+                locale: Locale::Uk,
                 kind: EventKind::Choice {
                     data: "toggle:bomb".to_owned(),
                     message: "77".to_owned()
