@@ -11,7 +11,6 @@ use crate::category::Category;
 use crate::geo::Cell;
 use crate::message::{Message, NOT_OFFICIAL, PRIVACY};
 use crate::ports::{Event, EventKind, SubscriptionError, Subscriptions};
-use crate::source::Source;
 use crate::subscriber::Subscription;
 
 /// A place from the gazetteer is named to a person only if it is this close to their cell, in
@@ -22,20 +21,13 @@ const NEAREST_PLACE_MAX_KM: f64 = 40.0;
 pub struct Conversation<'a> {
     subscriptions: &'a dyn Subscriptions,
     gazetteer: &'a Gazetteer,
-    sources: Vec<Source>,
 }
 
 impl<'a> Conversation<'a> {
-    /// `sources` are the names shown to people as where alerts come from.
-    pub fn new(
-        subscriptions: &'a dyn Subscriptions,
-        gazetteer: &'a Gazetteer,
-        sources: Vec<Source>,
-    ) -> Self {
+    pub fn new(subscriptions: &'a dyn Subscriptions, gazetteer: &'a Gazetteer) -> Self {
         Self {
             subscriptions,
             gazetteer,
-            sources,
         }
     }
 
@@ -77,18 +69,9 @@ impl<'a> Conversation<'a> {
     }
 
     fn welcome(&self) -> Message {
-        let sources = if self.sources.is_empty() {
-            "підключені джерела".to_owned()
-        } else {
-            self.sources
-                .iter()
-                .map(|s| s.label.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
         Message::asking_location(format!(
             "Я повідомляю про повітряні загрози біля вас: дрони, КАБи, ракети. Лише про ті, що стосуються вашого місця.\n\n\
-             Як це працює: ви ділитесь позицією, система отримує сигнали з підключених джерел ({sources}), а я надсилаю лише те, що стосується вашої околиці.\n\n\
+             Як це працює: ви ділитесь позицією, система обробляє повідомлення про загрози, а я надсилаю лише те, що стосується вашої околиці.\n\n\
              {NOT_OFFICIAL}\n\n{PRIVACY}\n\n\
              Команди:\n\
              /location — поділитися позицією\n\
@@ -191,7 +174,7 @@ impl<'a> Conversation<'a> {
             _ => {
                 return Ok(vec![Message::text(format!(
                     "Попередження про загрози поруч: {}.\nЩоб змінити: /nearby так або /nearby ні\n\
-                     «Поруч» — коли джерело пише, що щось летить повз або біля вашого міста, а не на нього.",
+                     «Поруч» — коли повідомляють, що щось летить повз або біля вашого міста, а не на нього.",
                     on_off(subscription.include_nearby)
                 ))]);
             }
@@ -209,17 +192,8 @@ impl<'a> Conversation<'a> {
                 "Я ще нічого про вас не знаю. Поділіться позицією, і я почну стежити.",
             )]);
         };
-        let sources = if self.sources.is_empty() {
-            "—".to_owned()
-        } else {
-            self.sources
-                .iter()
-                .map(|s| s.label.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
         Ok(vec![Message::text(format!(
-            "Позиція: {}\nВиди: {}\nЗагрози поруч: {}\nДжерела: {sources}\n\n{NOT_OFFICIAL}",
+            "Позиція: {}\nВиди: {}\nЗагрози поруч: {}\n\n{NOT_OFFICIAL}",
             self.near(subscription.cell),
             describe(&subscription.categories),
             if subscription.include_nearby {
