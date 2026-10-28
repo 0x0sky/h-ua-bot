@@ -47,9 +47,9 @@ impl Chat {
 
     async fn say(&self, event: &Event) -> Vec<Message> {
         Conversation::new(&self.subscriptions, &self.gazetteer)
-        .handle(event)
-        .await
-        .unwrap()
+            .handle(event)
+            .await
+            .unwrap()
     }
 
     async fn saved(&self) -> Option<Subscription> {
