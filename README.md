@@ -53,6 +53,10 @@ An explicit retraction of a prior report is shown without implying official all-
 | `/status` | What the bot knows about you |
 | `/stop` | Delete your subscription and position |
 
+The same commands are in Telegram's menu, set with `setMyCommands` on every start, and every reply
+carries a keyboard that stays under the input field: 📍 Оновити позицію, 🛡 Стан, ⚙️ Що стежити,
+❓ Довідка. An empty chat shows what the bot is before the first `/start`.
+
 For a non-delivering production auth/routing test before any controlled
 live-chat verification, see [the deployment handshake](docs/production-deploy.md).
 

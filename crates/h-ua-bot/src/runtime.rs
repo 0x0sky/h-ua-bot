@@ -45,6 +45,10 @@ pub async fn run(config: Config) -> Result<(), String> {
         .await
         .map_err(|e| format!("Telegram refused the token: {e}"))?;
     info!(%username, "connected to Telegram");
+    // The menu and the description are what a person sees first; without them the bot still works.
+    if let Err(error) = telegram.set_up_profile().await {
+        warn!(?error, "could not set the command menu and description");
+    }
 
     let gazetteer = Arc::new(Gazetteer::embedded().map_err(|e| e.to_string())?);
     let subscriptions: Arc<dyn Subscriptions> = Arc::new(HubSubscriptions::new(hub));
