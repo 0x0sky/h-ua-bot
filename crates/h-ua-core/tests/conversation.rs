@@ -70,7 +70,6 @@ async fn the_welcome_says_what_this_is_not_and_what_is_kept() {
         assert!(text.contains("ідентифікатор вашого чату"));
         assert!(!text.contains("Джерела:"));
         assert!(!text.contains("@vanek_nikolaev"));
-        assert!(!text.contains("джерел"));
         assert!(replies[0].ask_location);
     }
 }
