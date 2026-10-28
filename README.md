@@ -2,19 +2,19 @@
 
 A bot that tells people about air threats near them, and only those.
 
-You give it one thing: where you are. Prism currently reads public Telegram channels, works out from each post
-which places are in danger, and messages you only when that includes yours. Drones, guided
-bombs, and missiles, each on its own switch.
+You share your approximate location. Prism evaluates incoming threat reports and determines
+which places may be affected. The bot delivers relevant warnings for your area, according
+to the categories you select: drones, guided bombs, and missiles.
 
 ```text
-four public channels ─▶ prism-hub ─▶ Porter ─▶ h-ua-bot ─▶ Telegram ─▶ you
-  (equal source status)    (Prism Signal     (renders    (sends)       ◀─ position,
-                            + subscriptions)  report)                 kinds, /stop
+threat reports ─▶ Prism Hub ─▶ Porter ─▶ h-ua-bot ─▶ Telegram ─▶ you
+                   (assessment,    (renders    (sends)       ◀─ position,
+                   subscriptions)  alert)                   kinds, /stop
 ```
 
-**Not an official warning.** The sources are unofficial, human-run channels. Every alert says so,
-names the source, and links the original post. No message does not mean safe. Official air-raid
-alerts remain the authority.
+**Not an official warning.** The bot does not replace official air-raid alerts.
+Every warning explains this limitation. No message does not mean safe: always
+follow official air-raid notifications.
 
 ## What a person sees
 
@@ -24,24 +24,23 @@ From then on the hub sends, in words Porter writes:
 ```text
 ⚠️ БпЛА — Київ
 Що: ударні дрони
-Повідомляли (Telegram, за київським часом):
-• 14:57 — @vanek_nikolaev https://t.me/vanek_nikolaev/43220
+Оновлено: 14:59 (за київським часом)
 
-Це неофіційне джерело, а не повітряна тривога. Стежте за офіційними оповіщеннями. Відсутність повідомлень не означає безпеки.
+Це неофіційне повідомлення, а не сигнал повітряної тривоги.
+Орієнтуйтесь на офіційні сповіщення. Відсутність повідомлень не означає безпеки.
 ```
 
-The hub can also ask the bot to keep one message current instead of adding a new one
-(`edit_message_id`), to remove superseded ones (`delete_message_ids`), and to deliver without a
-sound (`silent`), so an attack can be one board and one status rather than a message per report.
-What those messages say, and when they ring, is decided upstream; the bot only shows it.
+The hub can also ask the bot to update or remove a prior message, or to deliver
+without a sound. These behaviors are controlled by the upstream delivery contract;
+the bot does not independently decide whether a threat has ended.
 
-and, when the source calls a threat off (never on its own when a report merely lapses):
+An explicit retraction of a prior report is shown without implying official all-clear:
 
 ```text
-ℹ️ Джерела відкликали повідомлення: БпЛА, Київ
-14:59 (за київським часом) джерело відкликало своє повідомлення про загрозу. https://t.me/vanek_nikolaev/43222
+ℹ️ Уточнення щодо загрози: БпЛА, Київ
+Оновлено: 14:59 (за київським часом)
+Попереднє повідомлення про загрозу відкликано.
 Це не офіційний відбій. Загрозу не можна вважати знятою лише за цим повідомленням.
-Ще діють повідомлення про цю загрозу: Бровари.
 
 Відсутність повідомлень не означає безпеки.
 ```
@@ -54,16 +53,6 @@ and, when the source calls a threat off (never on its own when a report merely l
 | `/nearby так` / `ні` | Also warn about threats passing near, not at, you |
 | `/status` | What the bot knows about you |
 | `/stop` | Delete your subscription and position |
-
-Four equal configured public Telegram sources are
-[@vanek_nikolaev](https://t.me/vanek_nikolaev),
-[@kpszsu](https://t.me/kpszsu),
-[@war_monitor](https://t.me/war_monitor) and
-[@monitorwarr](https://t.me/monitorwarr).
-Their names in the bot are a **display catalog**, not collector configuration:
-Prism Hub must independently poll the same channels, with the reviewed
-Prism Signal runtime pinned in its image. Multiple channels may repeat
-a single original post; the number of channels is not a probability.
 
 For a non-delivering production auth/routing test before any controlled
 live-chat verification, see [the deployment handshake](docs/production-deploy.md).
@@ -112,21 +101,6 @@ docker build -t h-ua-bot .
 `.github/workflows/image.yml` proves the image builds on every pull request and publishes
 `ghcr.io/0x0sky/h-ua-bot:<commit>` on a merge to `master`. Publishing an image does not deploy it.
 
-## Preparing multiple sources
-
-The bot can **describe** a typed source catalog without assuming every source is a Telegram
-channel. Set `HUA_SOURCES_JSON` (and unset legacy `HUA_SOURCES`) to a JSON array containing
-`id` (stable source identifier), `kind` (`telegram_channel`, `api`, `rss`, `website`, or
-`webhook`), and `label` (what the bot shows in `/start` and `/status`). The older
-comma-separated `HUA_SOURCES` is still supported.
-
-This catalog is **display-only**. It must contain only sources already active in Prism Hub;
-configuring a name here never creates a collector, proves its authority, or enables an
-incoming webhook. Prism Hub collects feeds and retains provenance, `prism-signal` evaluates
-reports, and Porter includes attribution in each alert. An API's official status does not
-make this bot an official warning service. Do not count a Telegram repost and its upstream
-API record as independent corroboration.
-
 ## Layout
 
 | Crate | Owns |
@@ -136,9 +110,9 @@ API record as independent corroboration.
 | `h-ua-telegram` | Telegram as the first client |
 | `h-ua-bot` | Configuration, the running loops, the endpoint the hub delivers to |
 
-Reading sources, judging reports, and deciding whom to tell are
+Evaluating threat reports and deciding whom to notify are
 [`prism-signal`](https://github.com/aiaiaiai-org/prism-signal)'s and
-[`prism-hub`](https://github.com/aiaiaiai-org/prism-hub)'s jobs, and the wording of an alert is
+[`prism-hub`](https://github.com/aiaiaiai-org/prism-hub)'s jobs. The wording of an alert belongs to
 [`prism-porter`](https://github.com/aiaiaiai-org/prism-porter)'s. See
 [`docs/architecture.md`](docs/architecture.md).
 
@@ -146,12 +120,10 @@ Reading sources, judging reports, and deciding whom to tell are
 
 Pre-release. Built and tested here: the conversation, the hub client (against a stand-in and, by
 hand, against a real hub), the delivery endpoint in the format the hub's gateway sends (checked
-against the hub's own gateway), the Telegram client against a scripted Bot API. **Not yet run
-against the real Bot API**: the JSON shapes follow its documentation and are checked with a fake
-transport only. The whole path, from a channel post to a message in a chat, has not been run
-end to end.
+against the hub's own gateway), the Telegram client against a scripted Bot API. The Telegram client is covered by a scripted Bot API transport; live production
+routing and authentication are verified separately. A controlled real-message end-to-end delivery test is still required.
 
-Not built: other messengers, actual collection of non-Telegram sources, reports about a whole region (`Київська
+Not built: other messengers, reports about a whole region (`Київська
 область`), webhooks, more than one process. Limits are listed in the architecture document.
 
 Licensed under MIT.
