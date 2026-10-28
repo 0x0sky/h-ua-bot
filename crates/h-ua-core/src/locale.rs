@@ -4,9 +4,9 @@
 //! The language the bot speaks to a person.
 //!
 //! A messenger reports a language tag such as `uk`, `ru-RU` or `en-GB`, usually without a region.
-//! The bot serves Ukraine, so Ukrainian, Russian and Belarusian speakers are answered in
-//! Ukrainian unless the tag places them in Russia, where they are answered in Russian. Everyone
-//! else is answered in English.
+//! The bot serves Ukraine. Russian speakers are answered in Russian unless the tag places them in
+//! Ukraine; Ukrainian and Belarusian speakers are answered in Ukrainian unless it places them in
+//! Russia. Everyone else is answered in English.
 
 /// A language the bot has copy for.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -24,8 +24,9 @@ impl Locale {
     /// Every locale, Ukrainian first.
     pub const ALL: [Locale; 3] = [Locale::Uk, Locale::Ru, Locale::En];
 
-    /// Resolves a language tag: `uk`, `ru-UA`, `be-BY` → Ukrainian; `ru-RU`, `uk-RU`, `be-RU` →
-    /// Russian; any other language → English. An empty tag means nothing is known: Ukrainian.
+    /// Resolves a language tag: `uk`, `ru-UA`, `be`, `be-BY` → Ukrainian; `ru`, `ru-RU`, `uk-RU`,
+    /// `be-RU` → Russian; any other language → English. An empty tag means nothing is known:
+    /// Ukrainian.
     pub fn from_tag(tag: &str) -> Self {
         let tag = tag.trim().replace('_', "-");
         if tag.is_empty() {
@@ -39,8 +40,10 @@ impl Locale {
             .map(str::to_uppercase)
             .unwrap_or_default();
         match language.as_str() {
-            "uk" | "ru" | "be" if region == "RU" => Self::Ru,
-            "uk" | "ru" | "be" => Self::Uk,
+            "ru" if region == "UA" => Self::Uk,
+            "ru" => Self::Ru,
+            "uk" | "be" if region == "RU" => Self::Ru,
+            "uk" | "be" => Self::Uk,
             _ => Self::En,
         }
     }
@@ -60,17 +63,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ukrainian_for_ukraine_and_for_a_bare_tag() {
+    fn ukrainian_for_ukrainian_and_belarusian_and_for_russian_in_ukraine() {
         for tag in [
-            "uk", "uk-UA", "ru-UA", "be-UA", "be-BY", "ru-BY", "ru", "be", "UK_ua", " uk ",
+            "uk", "uk-UA", "ru-UA", "be-UA", "be-BY", "be", "UK_ua", " uk ",
         ] {
             assert_eq!(Locale::from_tag(tag), Locale::Uk, "{tag}");
         }
     }
 
     #[test]
-    fn russian_for_russia() {
-        for tag in ["ru-RU", "uk-RU", "be-RU", "ru_ru", "ru-Cyrl-RU"] {
+    fn russian_for_russian_outside_ukraine_and_for_russia() {
+        for tag in [
+            "ru",
+            "ru-RU",
+            "ru-BY",
+            "uk-RU",
+            "be-RU",
+            "ru_ru",
+            "ru-Cyrl-RU",
+        ] {
             assert_eq!(Locale::from_tag(tag), Locale::Ru, "{tag}");
         }
     }

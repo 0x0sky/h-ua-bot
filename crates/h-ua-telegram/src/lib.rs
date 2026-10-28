@@ -939,7 +939,7 @@ mod tests {
         let locales: Vec<Locale> = events.iter().map(|event| event.locale).collect();
         assert_eq!(
             locales,
-            [Locale::En, Locale::Uk, Locale::Ru, Locale::Uk, Locale::Ru]
+            [Locale::En, Locale::Ru, Locale::Ru, Locale::Uk, Locale::Ru]
         );
     }
 
