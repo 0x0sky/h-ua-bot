@@ -867,7 +867,7 @@ mod tests {
                 other => panic!("not a command: {other:?}"),
             })
             .collect();
-        assert_eq!(names, ["status", "kinds", "help", "kinds"]);
+        assert_eq!(names, ["status", "kinds", "kinds", "help"]);
     }
 
     #[tokio::test]
