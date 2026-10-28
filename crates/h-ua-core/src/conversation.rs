@@ -9,7 +9,7 @@ use prism_signal_normalize::{Gazetteer, Place};
 
 use crate::category::Category;
 use crate::geo::Cell;
-use crate::message::{Message, NOT_OFFICIAL, PRIVACY};
+use crate::message::{Choice, Message, NOT_OFFICIAL, PRIVACY};
 use crate::ports::{Event, EventKind, SubscriptionError, Subscriptions};
 use crate::subscriber::Subscription;
 
@@ -36,6 +36,7 @@ impl<'a> Conversation<'a> {
         match &event.kind {
             EventKind::Command { name, args } => self.command(event, name, args).await,
             EventKind::Location { lat, lon, live } => self.location(event, *lat, *lon, *live).await,
+            EventKind::Choice { data, message } => self.choice(event, data, message).await,
             EventKind::Other => Ok(vec![Message::text(
                 "Я розумію команди та позицію. Надішліть /help, щоб побачити, що вмію.",
             )]),
@@ -73,11 +74,10 @@ impl<'a> Conversation<'a> {
             "Я повідомляю про повітряні загрози біля вас: дрони, КАБи, ракети. Лише про ті, що стосуються вашого місця.\n\n\
              Як це працює: ви ділитесь позицією, система обробляє повідомлення про загрози, а я надсилаю лише те, що стосується вашої околиці.\n\n\
              {NOT_OFFICIAL}\n\n{PRIVACY}\n\n\
-             Команди:\n\
-             /location — поділитися позицією\n\
-             /kinds — види загроз (дрони, каби, ракети)\n\
-             /nearby — попереджати й про загрози поруч\n\
-             /status — що я про вас знаю\n\
+             Кнопки під полем вводу:\n\
+             📍 Оновити позицію\n\
+             🛡 Стан — що я про вас знаю\n\
+             ⚙️ Що стежити — дрони, КАБи, ракети, загрози поруч\n\
              /stop — видалити все"
         ))
     }
@@ -109,7 +109,7 @@ impl<'a> Conversation<'a> {
             return Ok(Vec::new());
         }
         Ok(vec![Message::text(format!(
-            "Позицію збережено. {}\nТочних координат я не зберігаю, лише клітинку близько 3 км.\n\nЗараз стежу за: {}. Змінити: /kinds",
+            "Позицію збережено. {}\nТочних координат я не зберігаю, лише клітинку близько 3 км.\n\nЗараз стежу за: {}. Змінити: ⚙️ Що стежити.",
             self.near(cell),
             describe(&subscription.categories),
         ))])
@@ -137,10 +137,7 @@ impl<'a> Conversation<'a> {
             .filter(|word| !word.is_empty())
             .collect();
         if words.is_empty() {
-            return Ok(vec![Message::text(format!(
-                "Зараз стежу за: {}.\nЩоб змінити, перелічіть потрібне: /kinds дрони каби ракети",
-                describe(&subscription.categories)
-            ))]);
+            return Ok(vec![settings(&subscription, None)]);
         }
         let mut chosen = BTreeSet::new();
         for word in &words {
@@ -171,13 +168,7 @@ impl<'a> Conversation<'a> {
         match args.trim().to_lowercase().as_str() {
             "on" | "так" | "вкл" | "увімк" => subscription.include_nearby = true,
             "off" | "ні" | "викл" | "вимк" => subscription.include_nearby = false,
-            _ => {
-                return Ok(vec![Message::text(format!(
-                    "Попередження про загрози поруч: {}.\nЩоб змінити: /nearby так або /nearby ні\n\
-                     «Поруч» — коли повідомляють, що щось летить повз або біля вашого міста, а не на нього.",
-                    on_off(subscription.include_nearby)
-                ))]);
-            }
+            _ => return Ok(vec![settings(&subscription, None)]),
         }
         self.subscriptions.save(&subscription).await?;
         Ok(vec![Message::text(format!(
@@ -193,7 +184,7 @@ impl<'a> Conversation<'a> {
             )]);
         };
         Ok(vec![Message::text(format!(
-            "Позиція: {}\nВиди: {}\nЗагрози поруч: {}\n\n{NOT_OFFICIAL}",
+            "Позиція: {}\nВиди: {}\nЗагрози поруч: {}",
             self.near(subscription.cell),
             describe(&subscription.categories),
             if subscription.include_nearby {
@@ -202,6 +193,42 @@ impl<'a> Conversation<'a> {
                 "ні"
             },
         ))])
+    }
+
+    /// A tap on the settings panel: switch one thing and redraw the panel where it is.
+    async fn choice(
+        &self,
+        event: &Event,
+        data: &str,
+        message: &str,
+    ) -> Result<Vec<Message>, SubscriptionError> {
+        let mut subscription = match self.subscription_or_ask(event).await? {
+            Ok(subscription) => subscription,
+            Err(reply) => return Ok(reply),
+        };
+        let mut note = None;
+        match data.strip_prefix(TOGGLE) {
+            Some(NEARBY) => subscription.include_nearby = !subscription.include_nearby,
+            Some(key) => {
+                let Some(category) = Category::from_key(key) else {
+                    return Ok(Vec::new());
+                };
+                if !subscription.categories.remove(&category) {
+                    subscription.categories.insert(category);
+                } else if subscription.categories.is_empty() {
+                    // Following nothing is a subscription that never speaks; /stop is for that.
+                    subscription.categories.insert(category);
+                    note = Some("Хоча б один вид лишається. Щоб не отримувати нічого: /stop");
+                }
+            }
+            None => return Ok(Vec::new()),
+        }
+        if note.is_none() {
+            self.subscriptions.save(&subscription).await?;
+        }
+        Ok(vec![
+            settings(&subscription, note).replacing(Some(message.to_owned())),
+        ])
     }
 
     /// `Найближче відоме місце: Київ.`, or nothing useful to say.
@@ -222,6 +249,45 @@ fn nearest(gazetteer: &Gazetteer, cell: Cell) -> Option<&Place> {
         .filter(|(_, distance)| *distance <= NEAREST_PLACE_MAX_KM)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(place, _)| place)
+}
+
+/// What a settings button sends back: `toggle:drone`, `toggle:nearby`.
+const TOGGLE: &str = "toggle:";
+const NEARBY: &str = "nearby";
+
+/// The settings panel: one button per thing to follow, each showing whether it is on.
+fn settings(subscription: &Subscription, note: Option<&str>) -> Message {
+    let mark = |on: bool| if on { "✅" } else { "▫️" };
+    let kinds = Category::ALL
+        .into_iter()
+        .map(|category| {
+            let on = subscription.categories.contains(&category);
+            Choice::new(
+                format!("{} {}", mark(on), capitalised(category.label())),
+                format!("{TOGGLE}{}", category.key()),
+            )
+        })
+        .collect();
+    let nearby = vec![Choice::new(
+        format!("{} Загрози поруч", mark(subscription.include_nearby)),
+        format!("{TOGGLE}{NEARBY}"),
+    )];
+    let mut text = "⚙️ Що стежити\n\nНатисніть, щоб увімкнути чи вимкнути.\n\
+                    «Поруч» — коли щось летить повз ваше місто або біля нього, а не на нього."
+        .to_owned();
+    if let Some(note) = note {
+        text.push_str("\n\n");
+        text.push_str(note);
+    }
+    Message::text(text).with_choices(vec![kinds, nearby])
+}
+
+fn capitalised(word: &str) -> String {
+    let mut chars = word.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 fn on_off(on: bool) -> &'static str {
