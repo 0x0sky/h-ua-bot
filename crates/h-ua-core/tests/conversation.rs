@@ -310,3 +310,20 @@ async fn unknown_input_gets_a_pointer_to_help() {
     };
     assert!(chat.say(&other).await[0].text.contains("/help"));
 }
+
+#[tokio::test]
+async fn replies_are_marked_with_the_language_they_answer() {
+    let chat = Chat::new();
+    for locale in Locale::ALL {
+        let help = Event {
+            locale,
+            ..command("help", "")
+        };
+        assert!(
+            chat.say(&help)
+                .await
+                .iter()
+                .all(|reply| reply.locale == locale)
+        );
+    }
+}

@@ -35,14 +35,19 @@ impl<'a> Conversation<'a> {
     /// Handles one event and returns the replies, in order.
     pub async fn handle(&self, event: &Event) -> Result<Vec<Message>, SubscriptionError> {
         let copy = Copy::of(event.locale);
-        match &event.kind {
+        let replies = match &event.kind {
             EventKind::Command { name, args } => self.command(event, copy, name, args).await,
             EventKind::Location { lat, lon, live } => {
                 self.location(event, copy, *lat, *lon, *live).await
             }
             EventKind::Choice { data, message } => self.choice(event, copy, data, message).await,
             EventKind::Other => Ok(vec![Message::text(copy.other)]),
-        }
+        }?;
+        // The messenger draws its buttons in the same language.
+        Ok(replies
+            .into_iter()
+            .map(|reply| reply.in_locale(event.locale))
+            .collect())
     }
 
     async fn command(
@@ -97,6 +102,7 @@ impl<'a> Conversation<'a> {
             &[
                 ("near", &self.near(copy, cell)),
                 ("kinds", &describe(copy, &subscription.categories)),
+                ("settings", copy.button_settings),
             ],
         ))])
     }
@@ -249,9 +255,17 @@ impl<'a> Conversation<'a> {
 
 /// The welcome: what the bot does, the two notices, and the buttons.
 fn welcome(copy: &Copy) -> Message {
+    let buttons = fill(
+        copy.welcome_buttons,
+        &[
+            ("location", copy.button_location),
+            ("status", copy.button_status),
+            ("settings", copy.button_settings),
+        ],
+    );
     Message::asking_location(format!(
-        "{}\n\n{}\n\n{}\n\n{}",
-        copy.welcome, copy.not_official, copy.privacy, copy.welcome_buttons
+        "{}\n\n{}\n\n{}\n\n{buttons}",
+        copy.welcome, copy.not_official, copy.privacy
     ))
 }
 

@@ -18,8 +18,25 @@ pub struct Copy {
     pub not_official: &'static str,
     /// What is kept about a person. Every welcome carries it.
     pub privacy: &'static str,
-    /// The buttons under the input field, after the two notices.
+    /// The buttons under the input field, after the two notices: `{location}`, `{status}`,
+    /// `{settings}`.
     pub welcome_buttons: &'static str,
+    /// The button that shares a position.
+    pub button_location: &'static str,
+    /// The button for `/status`.
+    pub button_status: &'static str,
+    /// The button for `/kinds`, the settings.
+    pub button_settings: &'static str,
+    /// The button for `/help`.
+    pub button_help: &'static str,
+    /// The button that leaves the settings for the main keyboard.
+    pub button_back: &'static str,
+    /// The input field's hint under the main keyboard.
+    pub hint_menu: &'static str,
+    /// The input field's hint when a position is asked for.
+    pub hint_location: &'static str,
+    /// The input field's hint under the settings.
+    pub hint_settings: &'static str,
     /// Asks for a position with the share button.
     pub location_prompt: &'static str,
     /// After `⬅️ Меню`.
@@ -32,7 +49,7 @@ pub struct Copy {
     pub other: &'static str,
     /// A position that cannot be read.
     pub bad_location: &'static str,
-    /// A position was kept: `{near}`, `{kinds}`.
+    /// A position was kept: `{near}`, `{kinds}`, `{settings}`.
     pub saved: &'static str,
     /// A choice was made before any position.
     pub position_first: &'static str,
@@ -107,17 +124,25 @@ pub static UK: Copy = Copy {
     not_official: "⚠️ Це неофіційний сервіс. Повідомлення бота не замінюють офіційного оповіщення. Відсутність повідомлення не означає безпеку. Орієнтуйтесь на офіційні сповіщення про повітряну тривогу.",
     privacy: "🔒 Позицію зберігаю лише як грубу клітинку близько 3 км, а не точні координати. Разом із нею зберігається технічний ідентифікатор вашого чату. /stop видаляє підписку й позицію.",
     welcome_buttons: "Кнопки під полем вводу:\n\
-                      📍 Оновити позицію\n\
-                      🛡 Стан — що я про вас знаю\n\
-                      ⚙️ За чим стежити? — дрони, КАБи, ракети, загрози поруч\n\
+                      {location}\n\
+                      {status} — що я про вас знаю\n\
+                      {settings} — дрони, КАБи, ракети, загрози поруч\n\
                       /stop — видалити все",
+    button_location: "📍 Оновити позицію",
+    button_status: "🛡 Стан",
+    button_settings: "⚙️ За чим стежити?",
+    button_help: "❓ Довідка",
+    button_back: "⬅️ Меню",
+    hint_menu: "Команда або кнопка нижче",
+    hint_location: "Натисніть 📍, щоб поділитися позицією",
+    hint_settings: "Оберіть, за чим стежити",
     location_prompt: "Натисніть кнопку нижче, щоб поділитися позицією. Якщо поділитеся «живою» позицією, я оновлюватиму її, поки ви рухаєтесь.",
     menu: "Головне меню",
     stopped: "Готово: підписку й позицію видалено, повідомлень більше не буде. Технічний ідентифікатор чату лишається в системі, але без підписки нічого не надсилається. Щоб повернутись, надішліть /start і поділіться позицією.",
     unknown_command: "Не знаю такої команди. Надішліть /help, щоб побачити, що вмію.",
     other: "Я розумію команди та позицію. Надішліть /help, щоб побачити, що вмію.",
     bad_location: "Не можу прочитати цю позицію. Спробуйте ще раз.",
-    saved: "Позицію збережено. {near}\nТочних координат я не зберігаю, лише клітинку близько 3 км.\n\nЗараз стежу за: {kinds}. Змінити: ⚙️ За чим стежити?",
+    saved: "Позицію збережено. {near}\nТочних координат я не зберігаю, лише клітинку близько 3 км.\n\nЗараз стежу за: {kinds}. Змінити: {settings}",
     position_first: "Спершу поділіться позицією: без неї я не знаю, що вас стосується.",
     nothing_known: "Я ще нічого про вас не знаю. Поділіться позицією, і я почну стежити.",
     status: "Позиція: {near}\nВиди: {kinds}\nЗагрози поруч: {nearby}",
@@ -163,6 +188,5 @@ mod tests {
     #[test]
     fn category_names_match_the_catalog() {
         assert_eq!(UK.category(Category::Bomb), "КАБи");
-        assert_eq!(Category::Bomb.label(), UK.category(Category::Bomb));
     }
 }

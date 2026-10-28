@@ -4,6 +4,8 @@
 //! What the bot says in conversation, before a messenger formats it. The copy itself is in
 //! [`copy`](crate::copy). Alerts are not here: the hub composes them and Porter renders them.
 
+use crate::locale::Locale;
+
 /// A message to a person, before any messenger formats it.
 ///
 /// Plain text only. A messenger adapter must not need to escape anything.
@@ -20,6 +22,8 @@ pub struct Message {
     /// Replace this earlier message when the messenger supports editing its choice markup.
     /// Telegram reply keyboards require a new message instead.
     pub replaces: Option<String>,
+    /// The language of the text, so a messenger draws its own buttons in the same one.
+    pub locale: Locale,
 }
 
 /// A button under a message.
@@ -68,6 +72,12 @@ impl Message {
     /// The same message, replacing an earlier one.
     pub fn replacing(mut self, message: Option<String>) -> Self {
         self.replaces = message;
+        self
+    }
+
+    /// The same message, marked as written in a language.
+    pub fn in_locale(mut self, locale: Locale) -> Self {
+        self.locale = locale;
         self
     }
 }
