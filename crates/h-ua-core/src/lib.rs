@@ -12,6 +12,7 @@
 
 pub mod category;
 pub mod conversation;
+pub mod copy;
 pub mod geo;
 pub mod locale;
 pub mod memory;
