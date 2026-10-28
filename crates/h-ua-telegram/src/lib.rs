@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use h_ua_core::category::Category;
 use h_ua_core::message::{Choice, Message};
 use h_ua_core::ports::{ClientError, Event, EventKind, Messenger, SendError};
 use h_ua_core::subscriber::Recipient;
@@ -83,7 +84,7 @@ struct Screen {
     /// and a position they have since replaced.
     stale: Vec<i64>,
     /// Text labels of the currently visible reply-keyboard choices.
-    keyboard_choices: HashMap<String, String>,
+    keyboard_choices: Option<HashMap<String, String>>,
 }
 
 impl<T: Transport> TelegramClient<T> {
@@ -227,7 +228,7 @@ impl<T: Transport> TelegramClient<T> {
                 .screens
                 .lock()
                 .map_err(|_| SendError::Unavailable("poisoned screen state".to_owned()))?;
-            screens.entry(chat).or_default().keyboard_choices = choices;
+            screens.entry(chat).or_default().keyboard_choices = Some(choices);
         }
         if let (Some(chat), Some(sent)) = (chat_number, sent) {
             self.tidy(chat, sent).await;
@@ -342,6 +343,21 @@ fn buttons(choices: &[Vec<Choice>]) -> Value {
         "one_time_keyboard": false,
         "input_field_placeholder": "Оберіть, за чим стежити",
     })
+}
+
+/// A Telegram client may retain the reply keyboard across bot restarts. Decode only
+/// our known category labels when no keyboard state has been established for this chat.
+fn restored_choice(label: &str) -> Option<String> {
+    let kind = label
+        .strip_prefix("✅ ")
+        .or_else(|| label.strip_prefix("▫️ "))?;
+    if kind == "Загрози поруч" {
+        return Some("toggle:nearby".to_owned());
+    }
+    Category::ALL
+        .into_iter()
+        .find(|category| category.label().to_lowercase() == kind.to_lowercase())
+        .map(|category| format!("toggle:{}", category.key()))
 }
 
 fn message_body(chat: Value, thread_id: Option<i64>, text: &str) -> Value {
@@ -609,11 +625,13 @@ impl<T: Transport> Messenger for TelegramClient<T> {
                 }
                 let label = message.text.as_deref()?.trim();
                 let screens = self.screens.lock().ok()?;
-                screens
-                    .get(&message.chat.id)?
-                    .keyboard_choices
-                    .get(label)
-                    .cloned()
+                match screens
+                    .get(&message.chat.id)
+                    .and_then(|screen| screen.keyboard_choices.as_ref())
+                {
+                    Some(choices) => choices.get(label).cloned(),
+                    None => restored_choice(label),
+                }
             });
             if let Some(mut event) = event_from(update) {
                 if let Some(data) = choice {
@@ -956,6 +974,29 @@ mod tests {
         assert_eq!(calls[3].0, "deleteMessage");
         assert_eq!(calls[3].1["message_id"], 80);
         assert_eq!(calls[4].1["message_id"], 77);
+    }
+
+    #[tokio::test]
+    async fn settings_reply_buttons_survive_a_bot_restart() {
+        let events = heard(json!([
+            private(1, 42, json!({"text": "▫️ КАБи"})),
+            private(2, 42, json!({"text": "✅ Загрози поруч"})),
+        ]))
+        .await;
+        assert_eq!(
+            events[0].kind,
+            EventKind::Choice {
+                data: "toggle:bomb".into(),
+                message: String::new(),
+            }
+        );
+        assert_eq!(
+            events[1].kind,
+            EventKind::Choice {
+                data: "toggle:nearby".into(),
+                message: String::new(),
+            }
+        );
     }
 
     #[tokio::test]
