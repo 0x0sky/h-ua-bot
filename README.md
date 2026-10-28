@@ -48,12 +48,12 @@ An explicit retraction of a prior report is shown without implying official all-
 | --- | --- |
 | `/start`, `/help` | What this is and is not, what is kept, the location button |
 | `/location` | Share a position. A live location is followed silently as you move |
-| `/kinds`, ⚙️ Що стежити | A panel of buttons that switch drones, bombs, missiles and threats passing near, not at, you. Each tap redraws the panel in place |
+| `/kinds`, ⚙️ За чим стежити? | A custom reply keyboard to switch drones, bombs, missiles and threats passing nearby. Each selection refreshes the buttons; ⬅️ Меню returns to the main keyboard |
 | `/status` | What the bot knows about you |
 | `/stop` | Delete your subscription and position |
 
 The same commands are in Telegram's menu, set with `setMyCommands` on every start, and every reply
-carries a keyboard that stays under the input field: 📍 Оновити позицію, 🛡 Стан, ⚙️ Що стежити,
+carries a keyboard that stays under the input field: 📍 Оновити позицію, 🛡 Стан, ⚙️ За чим стежити?,
 ❓ Довідка. An empty chat shows what the bot is before the first `/start`.
 
 The chat stays tidy. The bot keeps one reply of its own: each new reply deletes the previous one,

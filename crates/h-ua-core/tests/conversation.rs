@@ -167,7 +167,10 @@ async fn kinds_are_chosen_in_either_language_and_bad_words_change_nothing() {
     let chat = Chat::new();
     chat.say(&location(50.40, 30.60, false)).await;
     let shown = chat.say(&command("kinds", "")).await;
-    assert!(shown[0].text.starts_with("⚙️ Що стежити"));
+    assert!(shown[0].text.starts_with("⚙️ За чим стежити?"));
+    let back = chat.say(&command("menu", "")).await;
+    assert_eq!(back[0].text, "Головне меню");
+    assert!(back[0].choices.is_empty());
 
     let replies = chat.say(&command("kinds", "каби, ракеты")).await;
     assert!(replies[0].text.contains("КАБи, ракети"));

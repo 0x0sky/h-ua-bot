@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use h_ua_core::category::Category;
 use h_ua_core::message::{Choice, Message};
 use h_ua_core::ports::{ClientError, Event, EventKind, Messenger, SendError};
 use h_ua_core::subscriber::Recipient;
@@ -30,12 +31,15 @@ const LONG_POLL_SECS: u64 = 30;
 
 /// Label of the button that shares a position.
 const LOCATION_BUTTON: &str = "📍 Оновити позицію";
+const BACK_BUTTON: &str = "⬅️ Меню";
+/// Users may still have the previous menu stored in Telegram after an upgrade.
+const LEGACY_KINDS_BUTTON: &str = "⚙️ Що стежити";
 
 /// The buttons under the input field, and the command each one stands for. Telegram sends a
 /// button's label as plain text, so the label is matched back to the command.
 const MENU_BUTTONS: [(&str, &str); 3] = [
     ("🛡 Стан", "status"),
-    ("⚙️ Що стежити", "kinds"),
+    ("⚙️ За чим стежити?", "kinds"),
     ("❓ Довідка", "help"),
 ];
 
@@ -43,7 +47,7 @@ const MENU_BUTTONS: [(&str, &str); 3] = [
 const COMMANDS: [(&str, &str); 5] = [
     ("location", "📍 Оновити позицію"),
     ("status", "🛡 Що я стежу для вас"),
-    ("kinds", "⚙️ Що стежити: дрони, КАБи, ракети, поруч"),
+    ("kinds", "⚙️ За чим стежити? Дрони, КАБи, ракети, поруч"),
     ("help", "❓ Як це працює"),
     ("stop", "🗑 Видалити підписку й позицію"),
 ];
@@ -79,6 +83,8 @@ struct Screen {
     /// What the person sent that the next reply makes redundant: commands, button taps, text,
     /// and a position they have since replaced.
     stale: Vec<i64>,
+    /// Text labels of the currently visible reply-keyboard choices.
+    keyboard_choices: Option<HashMap<String, String>>,
 }
 
 impl<T: Transport> TelegramClient<T> {
@@ -203,28 +209,26 @@ impl<T: Transport> TelegramClient<T> {
     async fn send_message(&self, chat: Value, message: &Message) -> Result<(), SendError> {
         let chat_number = chat.as_i64();
         let mut body = message_body(chat, None, &message.text);
-        let replaces = message
-            .replaces
-            .as_deref()
-            .and_then(|id| id.parse::<i64>().ok());
-        if let Some(message_id) = replaces {
-            // A panel is redrawn where the person tapped it.
-            body["message_id"] = json!(message_id);
-            body["reply_markup"] = buttons(&message.choices);
-            return match self.call_for_message("editMessageText", &body).await {
-                Err(SendError::Rejected(reason)) if reason.contains("message is not modified") => {
-                    Ok(())
-                }
-                outcome => outcome.map(|_| ()),
-            };
-        }
+        // A reply keyboard replaces the letter keyboard. It cannot be attached to an edited
+        // message, so a settings toggle sends the refreshed panel and tidies the old one.
         body["reply_markup"] = if message.choices.is_empty() {
             menu(message.ask_location)
         } else {
-            // The keyboard under the input field stays: an inline one does not replace it.
             buttons(&message.choices)
         };
         let sent = self.call_for_message("sendMessage", &body).await?;
+        if let Some(chat) = chat_number {
+            let choices = message
+                .choices
+                .iter()
+                .flatten()
+                .map(|choice| (choice.label.clone(), choice.data.clone()))
+                .collect();
+            // The message is already out: a poisoned lock must not report it as failed.
+            if let Ok(mut screens) = self.screens.lock() {
+                screens.entry(chat).or_default().keyboard_choices = Some(choices);
+            }
+        }
         if let (Some(chat), Some(sent)) = (chat_number, sent) {
             self.tidy(chat, sent).await;
         }
@@ -320,17 +324,39 @@ fn menu(ask_location: bool) -> Value {
     })
 }
 
-/// Buttons under a message.
+/// Custom reply keyboard for settings. Text replies are mapped back to choice data per chat.
 fn buttons(choices: &[Vec<Choice>]) -> Value {
-    let rows: Vec<Vec<Value>> = choices
+    let mut rows: Vec<Vec<Value>> = choices
         .iter()
         .map(|row| {
             row.iter()
-                .map(|choice| json!({"text": choice.label, "callback_data": choice.data}))
+                .map(|choice| json!({"text": choice.label}))
                 .collect()
         })
         .collect();
-    json!({"inline_keyboard": rows})
+    rows.push(vec![json!({"text": BACK_BUTTON})]);
+    json!({
+        "keyboard": rows,
+        "resize_keyboard": true,
+        "is_persistent": true,
+        "one_time_keyboard": false,
+        "input_field_placeholder": "Оберіть, за чим стежити",
+    })
+}
+
+/// A Telegram client may retain the reply keyboard across bot restarts. Decode only
+/// our known category labels when no keyboard state has been established for this chat.
+fn restored_choice(label: &str) -> Option<String> {
+    let kind = label
+        .strip_prefix("✅ ")
+        .or_else(|| label.strip_prefix("▫️ "))?;
+    if kind == "Загрози поруч" {
+        return Some("toggle:nearby".to_owned());
+    }
+    Category::ALL
+        .into_iter()
+        .find(|category| category.label().to_lowercase() == kind.to_lowercase())
+        .map(|category| format!("toggle:{}", category.key()))
 }
 
 fn message_body(chat: Value, thread_id: Option<i64>, text: &str) -> Value {
@@ -456,6 +482,24 @@ fn event_from(update: Update) -> Option<Event> {
         return None;
     }
     let text = message.text?;
+    if text.trim() == BACK_BUTTON {
+        return Some(Event {
+            from,
+            kind: EventKind::Command {
+                name: "menu".to_owned(),
+                args: String::new(),
+            },
+        });
+    }
+    if text.trim() == LEGACY_KINDS_BUTTON {
+        return Some(Event {
+            from,
+            kind: EventKind::Command {
+                name: "kinds".to_owned(),
+                args: String::new(),
+            },
+        });
+    }
     if let Some((_, command)) = MENU_BUTTONS.iter().find(|(label, _)| *label == text.trim()) {
         return Some(Event {
             from,
@@ -569,7 +613,38 @@ impl<T: Transport> Messenger for TelegramClient<T> {
                 }
             }
         }
-        Ok(updates.into_iter().filter_map(event_from).collect())
+        let mut events = Vec::new();
+        for update in updates {
+            // Reply-keyboard buttons arrive as ordinary text, not callback queries.
+            let choice = update.message.as_ref().and_then(|message| {
+                if message.chat.kind != "private"
+                    || message.from.as_ref().is_some_and(|sender| sender.is_bot)
+                {
+                    return None;
+                }
+                let label = message.text.as_deref()?.trim();
+                let screens = self.screens.lock().ok()?;
+                match screens
+                    .get(&message.chat.id)
+                    .and_then(|screen| screen.keyboard_choices.as_ref())
+                {
+                    Some(choices) => choices.get(label).cloned(),
+                    None => restored_choice(label),
+                }
+            });
+            if let Some(mut event) = event_from(update) {
+                if let Some(data) = choice {
+                    if matches!(event.kind, EventKind::Other) {
+                        event.kind = EventKind::Choice {
+                            data,
+                            message: String::new(),
+                        };
+                    }
+                }
+                events.push(event);
+            }
+        }
+        Ok(events)
     }
 }
 
@@ -776,8 +851,9 @@ mod tests {
     async fn the_menu_buttons_are_read_as_their_commands() {
         let events = heard(json!([
             private(1, 42, json!({"text": "🛡 Стан"})),
-            private(2, 42, json!({"text": "⚙️ Що стежити"})),
+            private(2, 42, json!({"text": "⚙️ За чим стежити?"})),
             private(3, 42, json!({"text": "❓ Довідка"})),
+            private(4, 42, json!({"text": "⚙️ Що стежити"})),
         ]))
         .await;
         let names: Vec<String> = events
@@ -790,7 +866,7 @@ mod tests {
                 other => panic!("not a command: {other:?}"),
             })
             .collect();
-        assert_eq!(names, ["status", "kinds", "help"]);
+        assert_eq!(names, ["status", "kinds", "help", "kinds"]);
     }
 
     #[tokio::test]
@@ -855,32 +931,106 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn choices_go_under_the_message_and_a_redraw_edits_it_in_place() {
+    async fn settings_use_a_persistent_reply_keyboard_and_taps_refresh_it() {
         let panel =
             Message::text("⚙️").with_choices(vec![vec![Choice::new("✅ Дрони", "toggle:drone")]]);
+        let sent = |id| Ok(json!({"ok": true, "result": {"message_id": id}}));
         let (fake, script) = Fake::answering(vec![
-            ok(),
-            Ok(
-                json!({"ok": false, "error_code": 400, "description": "Bad Request: message is not modified"}),
-            ),
+            sent(77),
+            Ok(updates(json!([private(
+                1,
+                42,
+                json!({"message_id": 80, "text": "✅ Дрони"})
+            )]))),
+            sent(81),
+            Ok(json!({"ok": true, "result": true})),
+            Ok(json!({"ok": true, "result": true})),
         ]);
         let client = TelegramClient::new(fake);
         let me = Recipient::new("telegram", "42");
         client.send(&me, &panel).await.unwrap();
+        let events = client.poll().await.unwrap();
+        assert_eq!(
+            events[0].kind,
+            EventKind::Choice {
+                data: "toggle:drone".to_owned(),
+                message: String::new(),
+            }
+        );
         client
             .send(&me, &panel.clone().replacing(Some("77".to_owned())))
             .await
             .unwrap();
         let calls = script.calls.lock().unwrap();
         assert_eq!(calls[0].0, "sendMessage");
-        let button = &calls[0].1["reply_markup"]["inline_keyboard"][0][0];
-        assert_eq!(button["text"], "✅ Дрони");
-        assert_eq!(button["callback_data"], "toggle:drone");
-        assert_eq!(calls[1].0, "editMessageText");
-        assert_eq!(calls[1].1["message_id"], 77);
+        let markup = &calls[0].1["reply_markup"];
+        assert_eq!(markup["keyboard"][0][0]["text"], "✅ Дрони");
+        assert_eq!(markup["keyboard"][1][0]["text"], BACK_BUTTON);
+        assert_eq!(markup["is_persistent"], true);
+        assert_eq!(markup["one_time_keyboard"], false);
+        assert!(markup.get("inline_keyboard").is_none());
+        assert_eq!(calls[2].0, "sendMessage");
+        assert_eq!(calls[3].0, "deleteMessage");
+        assert_eq!(calls[3].1["message_id"], 80);
+        assert_eq!(calls[4].1["message_id"], 77);
+    }
+
+    #[tokio::test]
+    async fn settings_reply_buttons_survive_a_bot_restart() {
+        let events = heard(json!([
+            private(1, 42, json!({"text": "▫️ КАБи"})),
+            private(2, 42, json!({"text": "✅ Загрози поруч"})),
+        ]))
+        .await;
         assert_eq!(
-            calls[1].1["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
-            "toggle:drone"
+            events[0].kind,
+            EventKind::Choice {
+                data: "toggle:bomb".into(),
+                message: String::new(),
+            }
+        );
+        assert_eq!(
+            events[1].kind,
+            EventKind::Choice {
+                data: "toggle:nearby".into(),
+                message: String::new(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn returning_to_menu_restores_navigation_and_clears_old_toggles() {
+        let panel =
+            Message::text("⚙️").with_choices(vec![vec![Choice::new("✅ Дрони", "toggle:drone")]]);
+        let (fake, script) = Fake::answering(vec![
+            ok(),
+            ok(),
+            Ok(updates(json!([
+                private(1, 42, json!({"text": "✅ Дрони"})),
+                private(2, 42, json!({"text": BACK_BUTTON})),
+            ]))),
+        ]);
+        let client = TelegramClient::new(fake);
+        let me = Recipient::new("telegram", "42");
+        client.send(&me, &panel).await.unwrap();
+        client
+            .send(&me, &Message::text("Головне меню"))
+            .await
+            .unwrap();
+        let events = client.poll().await.unwrap();
+        assert!(matches!(events[0].kind, EventKind::Other));
+        assert_eq!(
+            events[1].kind,
+            EventKind::Command {
+                name: "menu".into(),
+                args: "".into(),
+            }
+        );
+        let calls = script.calls.lock().unwrap();
+        assert!(calls[1].1["reply_markup"].get("keyboard").is_some());
+        assert_eq!(
+            calls[1].1["reply_markup"]["keyboard"][1][1]["text"],
+            "⚙️ За чим стежити?"
         );
     }
 
