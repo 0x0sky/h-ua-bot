@@ -228,7 +228,9 @@ impl<'a> Conversation<'a> {
             self.subscriptions.save(&subscription).await?;
         }
         Ok(vec![
-            settings(&subscription, note).replacing(Some(message.to_owned())),
+            // A reply-keyboard tap has no message to replace.
+            settings(&subscription, note)
+                .replacing(Some(message.to_owned()).filter(|id| !id.is_empty())),
         ])
     }
 

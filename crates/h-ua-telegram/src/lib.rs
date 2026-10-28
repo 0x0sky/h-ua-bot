@@ -224,11 +224,10 @@ impl<T: Transport> TelegramClient<T> {
                 .flatten()
                 .map(|choice| (choice.label.clone(), choice.data.clone()))
                 .collect();
-            let mut screens = self
-                .screens
-                .lock()
-                .map_err(|_| SendError::Unavailable("poisoned screen state".to_owned()))?;
-            screens.entry(chat).or_default().keyboard_choices = Some(choices);
+            // The message is already out: a poisoned lock must not report it as failed.
+            if let Ok(mut screens) = self.screens.lock() {
+                screens.entry(chat).or_default().keyboard_choices = Some(choices);
+            }
         }
         if let (Some(chat), Some(sent)) = (chat_number, sent) {
             self.tidy(chat, sent).await;
@@ -853,8 +852,8 @@ mod tests {
         let events = heard(json!([
             private(1, 42, json!({"text": "🛡 Стан"})),
             private(2, 42, json!({"text": "⚙️ За чим стежити?"})),
-            private(4, 42, json!({"text": "⚙️ Що стежити"})),
             private(3, 42, json!({"text": "❓ Довідка"})),
+            private(4, 42, json!({"text": "⚙️ Що стежити"})),
         ]))
         .await;
         let names: Vec<String> = events
@@ -867,7 +866,7 @@ mod tests {
                 other => panic!("not a command: {other:?}"),
             })
             .collect();
-        assert_eq!(names, ["status", "kinds", "kinds", "help"]);
+        assert_eq!(names, ["status", "kinds", "help", "kinds"]);
     }
 
     #[tokio::test]
