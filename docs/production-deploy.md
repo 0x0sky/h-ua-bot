@@ -4,24 +4,17 @@ This repository owns the Telegram bot and its runtime credentials. The
 `aiaiaiai-org/infra` repository owns the host, SSH, routing and activation.
 Deploy is **manual** and does not run on PR merge.
 
-## Four Telegram sources
+## Internal alert processing
 
-The production deployment profile uses `vanek_nikolaev,kpszsu,war_monitor,monitorwarr`.
-The collector list is owned by `aiaiaiai-org/infra` in
-`contracts/services/prism-hub.yaml` (`PRISM_SIGNAL_TELEGRAM_CHANNELS`).
-The bot's `HUA_SOURCES` controls display only.
+The bot does not publish a list of input feeds or any individual provider names
+in `/start`, `/help`, `/status`, or alert messages. The active collection,
+source metadata, deduplication and provenance are maintained by Prism Hub and
+Prism Signal, not the Telegram client.
 
-Roll out the matching infra contract to Prism Hub first. Check the signal
-scheduler's collection results/cursors for each channel; HTTP health alone
-does not prove collection. Then deploy the bot and check /start and /status.
-An existing production `HUA_SOURCES` Variable overrides the workflow default:
-set it to the same four-channel list or remove the override before bot deployment.
-Do not set `PRISM_SIGNAL_SOURCES_JSON` alongside the comma-separated Hub setting.
-
-Keep the previous source list for rollback. If collection must return to one
-channel, restore the bot display to `vanek_nikolaev` and restore the Hub contract
-to the same list in the coordinated rollback. No source history or cursor needs
-to be deleted. Merging these changes does not activate them.
+Legacy `HUA_SOURCES` is still accepted by the current production configuration
+for compatibility but is **not used to compose user-facing messages**. Do not
+try to synchronize its value with Prism Hub to change the bot's visible text.
+Keep source monitoring and operational diagnostics in their owning services.
 
 ## Non-delivering Hub ↔ bot handshake
 
@@ -43,7 +36,7 @@ chat, message or idempotency key, so **cannot trigger a Telegram send**.
 The script does not echo the secret; its temporary header file is private and
 removed on exit.
 
-The Hub secret `PRISM_BOT_DELIVERY_SECRET` (infra Environment) and bot secret
+The Hub secret `PRISM_BOT_DELIVERY_SECRET` (prism-hub production Environment) and bot secret
 `HUA_DELIVERY_SECRET` (bot production Environment, encrypted at handoff)
 **must contain exactly the same value**. There is no safe way to infer that
 from GitHub variable names or green CI.
@@ -69,7 +62,7 @@ In **0x0sky/h-ua-bot → Settings → Environments → production** configure:
 | Variable | `HUA_HUB_ORIGIN` | Optional; defaults to `https://api.aiaiaiai.org/prism-hub` |
 | Variable | `HUA_HUB_PROVIDER_SCOPE` | Optional; defaults to `h-ua-bot` |
 | Variable | `HUA_ALERT_CHANNEL` | Optional; defaults to `alerts` |
-| Variable | `HUA_SOURCES` | Optional; deployment defaults to `vanek_nikolaev,kpszsu,war_monitor,monitorwarr` |
+| Variable | `HUA_SOURCES` | Legacy compatibility setting; never exposed to users |
 
 Neither `INFRA_AGE_RECIPIENT` nor `GHCR_PULL_TOKEN`/`GHCR_PULL_USER` nor
 SSH/VPS configuration belongs in this repository. Infra owns its private SSH
