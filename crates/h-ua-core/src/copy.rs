@@ -95,8 +95,9 @@ impl Copy {
     /// The catalog for a locale.
     pub fn of(locale: Locale) -> &'static Copy {
         match locale {
-            // Russian and English follow; until then everyone reads Ukrainian.
-            Locale::Uk | Locale::Ru | Locale::En => &UK,
+            Locale::Uk => &UK,
+            Locale::Ru => &RU,
+            Locale::En => &EN,
         }
     }
 
@@ -165,6 +166,102 @@ pub static UK: Copy = Copy {
     missile: "ракети",
 };
 
+/// Russian.
+pub static RU: Copy = Copy {
+    welcome: "Я сообщаю о воздушных угрозах рядом с вами: дроны, КАБы, ракеты. Только о тех, что касаются вашего места.\n\n\
+              Как это работает: вы делитесь позицией, система обрабатывает сообщения об угрозах, а я присылаю только то, что касается вашей округи.",
+    not_official: "⚠️ Это неофициальный сервис. Сообщения бота не заменяют официального оповещения. Отсутствие сообщения не означает безопасность. Ориентируйтесь на официальные оповещения о воздушной тревоге.",
+    privacy: "🔒 Позицию храню только как грубую клетку около 3 км, а не точные координаты. Вместе с ней хранится технический идентификатор вашего чата. /stop удаляет подписку и позицию.",
+    welcome_buttons: "Кнопки под полем ввода:\n\
+                      {location}\n\
+                      {status} — что я о вас знаю\n\
+                      {settings} — дроны, КАБы, ракеты, угрозы рядом\n\
+                      /stop — удалить всё",
+    button_location: "📍 Обновить позицию",
+    button_status: "🛡 Статус",
+    button_settings: "⚙️ За чем следить?",
+    button_help: "❓ Справка",
+    button_back: "⬅️ Меню",
+    hint_menu: "Команда или кнопка ниже",
+    hint_location: "Нажмите 📍, чтобы поделиться позицией",
+    hint_settings: "Выберите, за чем следить",
+    location_prompt: "Нажмите кнопку ниже, чтобы поделиться позицией. Если поделитесь «живой» позицией, я буду обновлять её, пока вы двигаетесь.",
+    menu: "Главное меню",
+    stopped: "Готово: подписка и позиция удалены, сообщений больше не будет. Технический идентификатор чата остаётся в системе, но без подписки ничего не отправляется. Чтобы вернуться, отправьте /start и поделитесь позицией.",
+    unknown_command: "Не знаю такой команды. Отправьте /help, чтобы увидеть, что я умею.",
+    other: "Я понимаю команды и позицию. Отправьте /help, чтобы увидеть, что я умею.",
+    bad_location: "Не могу прочитать эту позицию. Попробуйте ещё раз.",
+    saved: "Позиция сохранена. {near}\nТочных координат я не храню, только клетку около 3 км.\n\nСейчас слежу за: {kinds}. Изменить: {settings}",
+    position_first: "Сначала поделитесь позицией: без неё я не знаю, что вас касается.",
+    nothing_known: "Я пока ничего о вас не знаю. Поделитесь позицией, и я начну следить.",
+    status: "Позиция: {near}\nВиды: {kinds}\nУгрозы рядом: {nearby}",
+    unknown_kind: "Не понимаю «{word}». Доступные виды: дроны, КАБы, ракеты.",
+    following: "Хорошо, слежу за: {kinds}.",
+    nearby_set: "Предупреждения об угрозах рядом: {state}.",
+    settings: "⚙️ За чем следить?\n\nНажмите, чтобы включить или выключить.\n\
+               «Рядом» — когда что-то летит мимо вашего города или рядом с ним, а не на него.",
+    nearby_choice: "Угрозы рядом",
+    keep_one: "Хотя бы один вид остаётся. Чтобы не получать ничего: /stop",
+    near_place: "Ближайшее известное место: {place}.",
+    no_place: "Рядом нет мест из моего словаря, поэтому распознаю только упомянутые города.",
+    nothing: "ничем",
+    yes: "да",
+    no: "нет",
+    on: "включено",
+    off: "выключено",
+    drone: "дроны",
+    bomb: "КАБы",
+    missile: "ракеты",
+};
+
+/// English, for everyone else.
+pub static EN: Copy = Copy {
+    welcome: "I report air threats near you: drones, guided bombs, missiles. Only those that concern where you are.\n\n\
+              How it works: you share your position, the system processes threat reports, and I send only what concerns your area.",
+    not_official: "⚠️ This is an unofficial service. The bot's messages do not replace official alerts. No message does not mean you are safe. Follow the official air raid alerts.",
+    privacy: "🔒 I keep your position only as a coarse cell of about 3 km, not as exact coordinates. A technical identifier of your chat is kept with it. /stop deletes your subscription and position.",
+    welcome_buttons: "Buttons under the input field:\n\
+                      {location}\n\
+                      {status} — what I know about you\n\
+                      {settings} — drones, guided bombs, missiles, threats nearby\n\
+                      /stop — delete everything",
+    button_location: "📍 Update position",
+    button_status: "🛡 Status",
+    button_settings: "⚙️ What to follow?",
+    button_help: "❓ Help",
+    button_back: "⬅️ Menu",
+    hint_menu: "A command or a button below",
+    hint_location: "Tap 📍 to share your position",
+    hint_settings: "Choose what to follow",
+    location_prompt: "Tap the button below to share your position. If you share a live location, I will keep it updated as you move.",
+    menu: "Main menu",
+    stopped: "Done: your subscription and position are deleted, and no more messages will come. The chat's technical identifier stays in the system, but nothing is sent without a subscription. To come back, send /start and share your position.",
+    unknown_command: "I don't know that command. Send /help to see what I can do.",
+    other: "I understand commands and positions. Send /help to see what I can do.",
+    bad_location: "I can't read this position. Please try again.",
+    saved: "Position saved. {near}\nI don't keep exact coordinates, only a cell of about 3 km.\n\nNow following: {kinds}. To change: {settings}",
+    position_first: "Share your position first: without it I don't know what concerns you.",
+    nothing_known: "I don't know anything about you yet. Share your position and I'll start following.",
+    status: "Position: {near}\nKinds: {kinds}\nThreats nearby: {nearby}",
+    unknown_kind: "I don't understand “{word}”. Available kinds: drones, bombs, missiles.",
+    following: "OK, following: {kinds}.",
+    nearby_set: "Warnings about threats nearby: {state}.",
+    settings: "⚙️ What to follow?\n\nTap to switch on or off.\n\
+               “Nearby” means something flying past or close to your town, not at it.",
+    nearby_choice: "Threats nearby",
+    keep_one: "At least one kind stays on. To receive nothing: /stop",
+    near_place: "Nearest known place: {place}.",
+    no_place: "No places from my dictionary are nearby, so I only recognise towns that are mentioned.",
+    nothing: "nothing",
+    yes: "yes",
+    no: "no",
+    on: "on",
+    off: "off",
+    drone: "drones",
+    bomb: "guided bombs",
+    missile: "missiles",
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +280,48 @@ mod tests {
             "1 і 2, знову 1"
         );
         assert_eq!(fill("без змін", &[("a", "1")]), "без змін");
+    }
+
+    #[test]
+    fn every_catalog_keeps_the_notices_and_its_placeholders() {
+        for copy in [&UK, &RU, &EN] {
+            assert!(copy.not_official.starts_with("⚠️"));
+            assert!(copy.privacy.starts_with("🔒") && copy.privacy.contains("/stop"));
+            for (line, names) in [
+                (copy.saved, &["near", "kinds", "settings"][..]),
+                (copy.status, &["near", "kinds", "nearby"]),
+                (copy.welcome_buttons, &["location", "status", "settings"]),
+                (copy.unknown_kind, &["word"]),
+                (copy.following, &["kinds"]),
+                (copy.nearby_set, &["state"]),
+                (copy.near_place, &["place"]),
+            ] {
+                for name in names {
+                    assert!(line.contains(&format!("{{{name}}}")), "{name} in {line}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn button_labels_are_unique_within_a_locale() {
+        for copy in [&UK, &RU, &EN] {
+            let labels = [
+                copy.button_location,
+                copy.button_status,
+                copy.button_settings,
+                copy.button_help,
+            ];
+            let unique: std::collections::BTreeSet<_> = labels.iter().collect();
+            assert_eq!(unique.len(), labels.len());
+        }
+    }
+
+    #[test]
+    fn each_locale_has_its_own_catalog() {
+        assert!(Copy::of(Locale::Ru).not_official.contains("неофициальный"));
+        assert!(Copy::of(Locale::En).not_official.contains("unofficial"));
+        assert!(Copy::of(Locale::Uk).not_official.contains("неофіційний"));
     }
 
     #[test]

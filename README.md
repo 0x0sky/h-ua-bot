@@ -56,6 +56,18 @@ The same commands are in Telegram's menu, set with `setMyCommands` on every star
 carries a keyboard that stays under the input field: 📍 Оновити позицію, 🛡 Стан, ⚙️ За чим стежити?,
 ❓ Довідка. An empty chat shows what the bot is before the first `/start`.
 
+The conversation and its keyboards speak the person's language, read from Telegram's
+`language_code`:
+
+| Language code | Answered in |
+| --- | --- |
+| `uk`, `be`, `ru-UA`, and `uk`/`be` with any region but Russia (`uk-UA`, `be-BY`) | Ukrainian |
+| `ru`, `ru-RU`, `ru-BY`, `uk-RU`, `be-RU` | Russian |
+| anything else | English |
+
+A button is understood in any of the three languages, so changing the app's language with an old
+keyboard on screen still works. Alerts are composed by the hub and are not localized here.
+
 The chat stays tidy. The bot keeps one reply of its own: each new reply deletes the previous one,
 and the command, button or text it answers. The position shared last stays; a new one replaces it.
 The hub's board and status are left to the hub. The bot remembers these message ids in memory, so

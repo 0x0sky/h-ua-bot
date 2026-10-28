@@ -1024,6 +1024,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keyboards_follow_the_message_language_and_any_language_is_read_back() {
+        let (fake, script) = Fake::answering(vec![ok(), ok()]);
+        let client = TelegramClient::new(fake);
+        let me = Recipient::new("telegram", "42");
+        client
+            .send(&me, &Message::text("Main menu").in_locale(Locale::En))
+            .await
+            .unwrap();
+        let settings = Message::text("⚙️")
+            .with_choices(vec![vec![Choice::new("✅ Дроны", "toggle:drone")]])
+            .in_locale(Locale::Ru);
+        client.send(&me, &settings).await.unwrap();
+        {
+            let calls = script.calls.lock().unwrap();
+            let menu = &calls[0].1["reply_markup"];
+            assert_eq!(menu["keyboard"][0][0]["text"], "📍 Update position");
+            assert_eq!(menu["keyboard"][1][0]["text"], "🛡 Status");
+            assert_eq!(
+                menu["input_field_placeholder"],
+                "A command or a button below"
+            );
+            let panel = &calls[1].1["reply_markup"];
+            assert_eq!(panel["input_field_placeholder"], "Выберите, за чем следить");
+        }
+
+        let names: Vec<String> = heard(json!([
+            private(1, 42, json!({"text": "⚙️ What to follow?"})),
+            private(2, 42, json!({"text": "🛡 Статус"})),
+            private(3, 42, json!({"text": "⬅️ Menu"})),
+        ]))
+        .await
+        .into_iter()
+        .map(|event| match event.kind {
+            EventKind::Command { name, .. } => name,
+            other => panic!("not a command: {other:?}"),
+        })
+        .collect();
+        assert_eq!(names, ["kinds", "status", "menu"]);
+    }
+
+    #[tokio::test]
+    async fn settings_buttons_in_any_language_survive_a_bot_restart() {
+        let events = heard(json!([
+            private(1, 42, json!({"text": "▫️ Guided bombs"})),
+            private(2, 42, json!({"text": "✅ Угрозы рядом"})),
+        ]))
+        .await;
+        let toggles: Vec<String> = events
+            .into_iter()
+            .map(|event| match event.kind {
+                EventKind::Choice { data, .. } => data,
+                other => panic!("not a choice: {other:?}"),
+            })
+            .collect();
+        assert_eq!(toggles, ["toggle:bomb", "toggle:nearby"]);
+    }
+
+    #[tokio::test]
     async fn settings_reply_buttons_survive_a_bot_restart() {
         let events = heard(json!([
             private(1, 42, json!({"text": "▫️ КАБи"})),
