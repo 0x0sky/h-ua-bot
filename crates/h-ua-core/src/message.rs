@@ -1,8 +1,8 @@
 // © 2026 aiaiaiai · aiaiaiai.org
 // SPDX-License-Identifier: MIT
 
-//! What the bot says in conversation. All copy is here, in Ukrainian, so it can be reviewed in one
-//! place. Alerts are not here: the hub composes them and Porter renders them.
+//! What the bot says in conversation, before a messenger formats it. The copy itself is in
+//! [`copy`](crate::copy). Alerts are not here: the hub composes them and Porter renders them.
 
 /// A message to a person, before any messenger formats it.
 ///
