@@ -3,16 +3,16 @@
 
 //! Telegram as a client of h-ua-bot: the first [`Messenger`].
 //!
-//! Talks to the Bot API by long polling, so it needs no public address. It understands three
-//! things a person can do in a private chat: send a command, share a location, and update a live
-//! location. Everything else is ignored.
+//! Talks to the Bot API by long polling, so it needs no public address. It understands four
+//! things a person can do in a private chat: send a command, share a location, update a live
+//! location, and tap a button under a message. Everything else is ignored.
 
 mod transport;
 
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use h_ua_core::message::Message;
+use h_ua_core::message::{Choice, Message};
 use h_ua_core::ports::{ClientError, Event, EventKind, Messenger, SendError};
 use h_ua_core::subscriber::Recipient;
 use serde::Deserialize;
@@ -39,11 +39,10 @@ const MENU_BUTTONS: [(&str, &str); 3] = [
 ];
 
 /// The command menu, in the order a person needs it.
-const COMMANDS: [(&str, &str); 6] = [
+const COMMANDS: [(&str, &str); 5] = [
     ("location", "📍 Оновити позицію"),
     ("status", "🛡 Що я стежу для вас"),
-    ("kinds", "⚙️ Які загрози: дрони, КАБи, ракети"),
-    ("nearby", "🧭 Загрози поруч: так чи ні"),
+    ("kinds", "⚙️ Що стежити: дрони, КАБи, ракети, поруч"),
     ("help", "❓ Як це працює"),
     ("stop", "🗑 Видалити підписку й позицію"),
 ];
@@ -172,16 +171,43 @@ impl<T: Transport> TelegramClient<T> {
         .map(|_| ())
     }
 
-    async fn send_message(
-        &self,
-        chat: Value,
-        thread_id: Option<i64>,
-        text: &str,
-        ask_location: bool,
-    ) -> Result<Option<i64>, SendError> {
-        let mut body = message_body(chat, thread_id, text);
-        body["reply_markup"] = menu(ask_location);
-        self.call_for_message("sendMessage", &body).await
+    async fn send_message(&self, chat: Value, message: &Message) -> Result<(), SendError> {
+        let mut body = message_body(chat, None, &message.text);
+        let replaces = message
+            .replaces
+            .as_deref()
+            .and_then(|id| id.parse::<i64>().ok());
+        if let Some(message_id) = replaces {
+            // A panel is redrawn where the person tapped it.
+            body["message_id"] = json!(message_id);
+            body["reply_markup"] = buttons(&message.choices);
+            return match self.call_for_message("editMessageText", &body).await {
+                Err(SendError::Rejected(reason)) if reason.contains("message is not modified") => {
+                    Ok(())
+                }
+                outcome => outcome.map(|_| ()),
+            };
+        }
+        body["reply_markup"] = if message.choices.is_empty() {
+            menu(message.ask_location)
+        } else {
+            // The keyboard under the input field stays: an inline one does not replace it.
+            buttons(&message.choices)
+        };
+        self.call_for_message("sendMessage", &body)
+            .await
+            .map(|_| ())
+    }
+
+    /// Stops the spinner on a tapped button. Telegram shows it until this is called.
+    async fn acknowledge(&self, query: &str) {
+        if let Err(error) = self
+            .transport
+            .call("answerCallbackQuery", &json!({"callback_query_id": query}))
+            .await
+        {
+            debug!(%error, "could not acknowledge a button");
+        }
     }
 
     /// Calls a method that answers with a message, or with `true`, and returns the message id.
@@ -224,6 +250,19 @@ fn menu(ask_location: bool) -> Value {
     })
 }
 
+/// Buttons under a message.
+fn buttons(choices: &[Vec<Choice>]) -> Value {
+    let rows: Vec<Vec<Value>> = choices
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|choice| json!({"text": choice.label, "callback_data": choice.data}))
+                .collect()
+        })
+        .collect();
+    json!({"inline_keyboard": rows})
+}
+
 fn message_body(chat: Value, thread_id: Option<i64>, text: &str) -> Value {
     let mut body = json!({
         "chat_id": chat,
@@ -262,6 +301,21 @@ struct Update {
     update_id: i64,
     message: Option<Incoming>,
     edited_message: Option<Incoming>,
+    callback_query: Option<CallbackQuery>,
+}
+
+/// A tap on a button under a message.
+#[derive(Deserialize)]
+struct CallbackQuery {
+    id: String,
+    data: Option<String>,
+    message: Option<Tapped>,
+}
+
+#[derive(Deserialize)]
+struct Tapped {
+    message_id: i64,
+    chat: Chat,
 }
 
 #[derive(Deserialize)]
@@ -293,6 +347,19 @@ struct Location {
 
 /// Turns an update into what the person did, if it is something the bot understands.
 fn event_from(update: Update) -> Option<Event> {
+    if let Some(query) = update.callback_query {
+        let tapped = query.message?;
+        if tapped.chat.kind != "private" {
+            return None;
+        }
+        return Some(Event {
+            from: Recipient::new(CLIENT_NAME, tapped.chat.id.to_string()),
+            kind: EventKind::Choice {
+                data: query.data?,
+                message: tapped.message_id.to_string(),
+            },
+        });
+    }
     let (message, edited) = match (update.message, update.edited_message) {
         (Some(message), _) => (message, false),
         (None, Some(message)) => (message, true),
@@ -372,9 +439,7 @@ impl<T: Transport> Messenger for TelegramClient<T> {
     }
 
     async fn send(&self, to: &Recipient, message: &Message) -> Result<(), SendError> {
-        self.send_message(chat_id(to), None, &message.text, message.ask_location)
-            .await
-            .map(|_| ())
+        self.send_message(chat_id(to), message).await
     }
 
     async fn poll(&self) -> Result<Vec<Event>, ClientError> {
@@ -384,7 +449,7 @@ impl<T: Transport> Messenger for TelegramClient<T> {
             .map_err(|_| ClientError("poisoned".to_owned()))?;
         let mut body = json!({
             "timeout": LONG_POLL_SECS,
-            "allowed_updates": ["message", "edited_message"],
+            "allowed_updates": ["message", "edited_message", "callback_query"],
         });
         if let Some(offset) = offset {
             body["offset"] = json!(offset);
@@ -417,6 +482,13 @@ impl<T: Transport> Messenger for TelegramClient<T> {
                 .map_err(|_| ClientError("poisoned".to_owned()))? = Some(last + 1);
         }
         debug!(count = updates.len(), "telegram updates");
+        let queries: Vec<String> = updates
+            .iter()
+            .filter_map(|update| update.callback_query.as_ref().map(|q| q.id.clone()))
+            .collect();
+        for query in &queries {
+            self.acknowledge(query).await;
+        }
         Ok(updates.into_iter().filter_map(event_from).collect())
     }
 }
@@ -576,7 +648,7 @@ mod tests {
         assert_eq!(calls[0].1["timeout"], 30);
         assert_eq!(
             calls[0].1["allowed_updates"],
-            json!(["message", "edited_message"])
+            json!(["message", "edited_message", "callback_query"])
         );
         assert_eq!(calls[1].1["offset"], 12);
     }
@@ -666,6 +738,70 @@ mod tests {
         assert!(commands.iter().any(|c| c["command"] == "stop"));
         assert!(DESCRIPTION.chars().count() <= 512);
         assert!(SHORT_DESCRIPTION.chars().count() <= 120);
+    }
+
+    #[tokio::test]
+    async fn a_tapped_button_is_read_and_acknowledged() {
+        let tap = json!({"update_id": 5, "callback_query": {
+            "id": "q1", "data": "toggle:bomb",
+            "from": {"id": 42, "is_bot": false},
+            "message": {"message_id": 77, "chat": {"id": 42, "type": "private"}}
+        }});
+        let group_tap = json!({"update_id": 6, "callback_query": {
+            "id": "q2", "data": "toggle:bomb",
+            "from": {"id": 42, "is_bot": false},
+            "message": {"message_id": 78, "chat": {"id": -5, "type": "group"}}
+        }});
+        let (fake, script) = Fake::answering(vec![
+            Ok(updates(json!([tap, group_tap]))),
+            Ok(json!({"ok": true, "result": true})),
+            Ok(json!({"ok": true, "result": true})),
+        ]);
+        let events = TelegramClient::new(fake).poll().await.unwrap();
+        assert_eq!(
+            events,
+            vec![Event {
+                from: Recipient::new("telegram", "42"),
+                kind: EventKind::Choice {
+                    data: "toggle:bomb".to_owned(),
+                    message: "77".to_owned()
+                },
+            }]
+        );
+        let calls = script.calls.lock().unwrap();
+        assert_eq!(calls[1].0, "answerCallbackQuery");
+        assert_eq!(calls[1].1["callback_query_id"], "q1");
+        assert_eq!(calls[2].1["callback_query_id"], "q2");
+    }
+
+    #[tokio::test]
+    async fn choices_go_under_the_message_and_a_redraw_edits_it_in_place() {
+        let panel =
+            Message::text("⚙️").with_choices(vec![vec![Choice::new("✅ Дрони", "toggle:drone")]]);
+        let (fake, script) = Fake::answering(vec![
+            ok(),
+            Ok(
+                json!({"ok": false, "error_code": 400, "description": "Bad Request: message is not modified"}),
+            ),
+        ]);
+        let client = TelegramClient::new(fake);
+        let me = Recipient::new("telegram", "42");
+        client.send(&me, &panel).await.unwrap();
+        client
+            .send(&me, &panel.clone().replacing(Some("77".to_owned())))
+            .await
+            .unwrap();
+        let calls = script.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "sendMessage");
+        let button = &calls[0].1["reply_markup"]["inline_keyboard"][0][0];
+        assert_eq!(button["text"], "✅ Дрони");
+        assert_eq!(button["callback_data"], "toggle:drone");
+        assert_eq!(calls[1].0, "editMessageText");
+        assert_eq!(calls[1].1["message_id"], 77);
+        assert_eq!(
+            calls[1].1["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+            "toggle:drone"
+        );
     }
 
     #[tokio::test]

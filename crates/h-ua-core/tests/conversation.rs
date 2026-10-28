@@ -25,6 +25,25 @@ fn command(name: &str, args: &str) -> Event {
     }
 }
 
+fn tap(data: &str) -> Event {
+    Event {
+        from: me(),
+        kind: EventKind::Choice {
+            data: data.to_owned(),
+            message: "77".to_owned(),
+        },
+    }
+}
+
+/// The labels of a panel's buttons, row by row.
+fn labels(message: &Message) -> Vec<Vec<String>> {
+    message
+        .choices
+        .iter()
+        .map(|row| row.iter().map(|choice| choice.label.clone()).collect())
+        .collect()
+}
+
 fn location(lat: f64, lon: f64, live: bool) -> Event {
     Event {
         from: me(),
@@ -148,7 +167,7 @@ async fn kinds_are_chosen_in_either_language_and_bad_words_change_nothing() {
     let chat = Chat::new();
     chat.say(&location(50.40, 30.60, false)).await;
     let shown = chat.say(&command("kinds", "")).await;
-    assert!(shown[0].text.contains("дрони, КАБи, ракети"));
+    assert!(shown[0].text.starts_with("⚙️ Що стежити"));
 
     let replies = chat.say(&command("kinds", "каби, ракеты")).await;
     assert!(replies[0].text.contains("КАБи, ракети"));
@@ -169,10 +188,9 @@ async fn kinds_are_chosen_in_either_language_and_bad_words_change_nothing() {
 async fn nearby_warnings_toggle() {
     let chat = Chat::new();
     chat.say(&location(50.40, 30.60, false)).await;
-    assert!(
-        chat.say(&command("nearby", "")).await[0]
-            .text
-            .contains("увімкнено")
+    assert_eq!(
+        labels(&chat.say(&command("nearby", "")).await[0])[1],
+        ["✅ Загрози поруч"]
     );
     assert!(
         chat.say(&command("nearby", "ні")).await[0]
@@ -189,7 +207,7 @@ async fn nearby_warnings_toggle() {
 }
 
 #[tokio::test]
-async fn status_reports_what_is_known_and_repeats_the_disclaimer() {
+async fn status_reports_what_is_known_without_repeating_the_disclaimer() {
     let chat = Chat::new();
     assert!(
         chat.say(&command("status", "")).await[0]
@@ -201,7 +219,63 @@ async fn status_reports_what_is_known_and_repeats_the_disclaimer() {
     assert!(text.contains("Київ"));
     assert!(!text.contains("Джерела:"));
     assert!(!text.contains("@vanek_nikolaev"));
-    assert!(text.contains("неофіційний сервіс"));
+    assert!(!text.contains("неофіційний"));
+}
+
+#[tokio::test]
+async fn the_settings_panel_switches_one_thing_per_tap_where_it_was_tapped() {
+    let chat = Chat::new();
+    chat.say(&location(50.40, 30.60, false)).await;
+    let panel = &chat.say(&command("kinds", "")).await[0];
+    assert_eq!(
+        labels(panel),
+        [
+            vec!["✅ Дрони", "✅ КАБи", "✅ Ракети"],
+            vec!["✅ Загрози поруч"]
+        ]
+    );
+    assert_eq!(panel.replaces, None);
+
+    let redrawn = &chat.say(&tap("toggle:bomb")).await[0];
+    assert_eq!(redrawn.replaces.as_deref(), Some("77"));
+    assert_eq!(labels(redrawn)[0], ["✅ Дрони", "▫️ КАБи", "✅ Ракети"]);
+    assert_eq!(
+        chat.saved().await.unwrap().categories,
+        [Category::Drone, Category::Missile].into()
+    );
+
+    chat.say(&tap("toggle:nearby")).await;
+    assert!(!chat.saved().await.unwrap().include_nearby);
+    chat.say(&tap("toggle:bomb")).await;
+    assert!(
+        chat.saved()
+            .await
+            .unwrap()
+            .categories
+            .contains(&Category::Bomb)
+    );
+}
+
+#[tokio::test]
+async fn the_last_kind_cannot_be_switched_off() {
+    let chat = Chat::new();
+    chat.say(&location(50.40, 30.60, false)).await;
+    chat.say(&command("kinds", "дрони")).await;
+    let refused = &chat.say(&tap("toggle:drone")).await[0];
+    assert!(refused.text.contains("Хоча б один вид"));
+    assert_eq!(
+        chat.saved().await.unwrap().categories,
+        [Category::Drone].into()
+    );
+}
+
+#[tokio::test]
+async fn a_tap_without_a_position_asks_for_one_and_an_unknown_tap_says_nothing() {
+    let chat = Chat::new();
+    assert!(chat.say(&tap("toggle:drone")).await[0].ask_location);
+    chat.say(&location(50.40, 30.60, false)).await;
+    assert!(chat.say(&tap("toggle:cats")).await.is_empty());
+    assert!(chat.say(&tap("nonsense")).await.is_empty());
 }
 
 #[tokio::test]

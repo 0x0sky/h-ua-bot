@@ -39,6 +39,13 @@ pub enum EventKind {
         /// updates are applied without a reply.
         live: bool,
     },
+    /// The person tapped a button under a message the bot sent.
+    Choice {
+        /// The button's [`Choice::data`](crate::message::Choice::data).
+        data: String,
+        /// The message the button was under, in the messenger's own terms.
+        message: String,
+    },
     /// Anything else, such as free text.
     Other,
 }

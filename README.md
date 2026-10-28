@@ -48,8 +48,7 @@ An explicit retraction of a prior report is shown without implying official all-
 | --- | --- |
 | `/start`, `/help` | What this is and is not, what is kept, the location button |
 | `/location` | Share a position. A live location is followed silently as you move |
-| `/kinds дрони каби ракети` | Choose what to follow |
-| `/nearby так` / `ні` | Also warn about threats passing near, not at, you |
+| `/kinds`, ⚙️ Що стежити | A panel of buttons that switch drones, bombs, missiles and threats passing near, not at, you. Each tap redraws the panel in place |
 | `/status` | What the bot knows about you |
 | `/stop` | Delete your subscription and position |
 

@@ -7,12 +7,37 @@
 /// A message to a person, before any messenger formats it.
 ///
 /// Plain text only. A messenger adapter must not need to escape anything.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Message {
     /// The text.
     pub text: String,
     /// Offer the person a way to share their position with one tap, where the messenger has one.
     pub ask_location: bool,
+    /// Buttons under the message, in rows. Tapping one comes back as
+    /// [`EventKind::Choice`](crate::ports::EventKind::Choice) with its `data`.
+    pub choices: Vec<Vec<Choice>>,
+    /// Replace this earlier message instead of sending a new one: a panel of choices is updated
+    /// where the person tapped it.
+    pub replaces: Option<String>,
+}
+
+/// A button under a message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Choice {
+    /// What the button says.
+    pub label: String,
+    /// What comes back when it is tapped. Short: messengers limit it.
+    pub data: String,
+}
+
+impl Choice {
+    /// A button.
+    pub fn new(label: impl Into<String>, data: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            data: data.into(),
+        }
+    }
 }
 
 impl Message {
@@ -20,7 +45,7 @@ impl Message {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            ask_location: false,
+            ..Self::default()
         }
     }
 
@@ -29,7 +54,20 @@ impl Message {
         Self {
             text: text.into(),
             ask_location: true,
+            ..Self::default()
         }
+    }
+
+    /// The same message with buttons under it.
+    pub fn with_choices(mut self, choices: Vec<Vec<Choice>>) -> Self {
+        self.choices = choices;
+        self
+    }
+
+    /// The same message, replacing an earlier one.
+    pub fn replacing(mut self, message: Option<String>) -> Self {
+        self.replaces = message;
+        self
     }
 }
 
