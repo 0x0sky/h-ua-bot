@@ -5,6 +5,7 @@
 
 use h_ua_core::category::Category;
 use h_ua_core::conversation::Conversation;
+use h_ua_core::locale::Locale;
 use h_ua_core::memory::MemorySubscriptions;
 use h_ua_core::message::Message;
 use h_ua_core::ports::{Event, EventKind, Subscriptions};
@@ -18,6 +19,7 @@ fn me() -> Recipient {
 fn command(name: &str, args: &str) -> Event {
     Event {
         from: me(),
+        locale: Locale::default(),
         kind: EventKind::Command {
             name: name.to_owned(),
             args: args.to_owned(),
@@ -28,6 +30,7 @@ fn command(name: &str, args: &str) -> Event {
 fn tap(data: &str) -> Event {
     Event {
         from: me(),
+        locale: Locale::default(),
         kind: EventKind::Choice {
             data: data.to_owned(),
             message: "77".to_owned(),
@@ -47,6 +50,7 @@ fn labels(message: &Message) -> Vec<Vec<String>> {
 fn location(lat: f64, lon: f64, live: bool) -> Event {
     Event {
         from: me(),
+        locale: Locale::default(),
         kind: EventKind::Location { lat, lon, live },
     }
 }
@@ -301,6 +305,7 @@ async fn unknown_input_gets_a_pointer_to_help() {
     );
     let other = Event {
         from: me(),
+        locale: Locale::default(),
         kind: EventKind::Other,
     };
     assert!(chat.say(&other).await[0].text.contains("/help"));

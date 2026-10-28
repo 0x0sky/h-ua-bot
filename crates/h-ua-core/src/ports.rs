@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
+use crate::locale::Locale;
 use crate::message::Message;
 use crate::subscriber::{Recipient, Subscription};
 
@@ -15,6 +16,8 @@ use crate::subscriber::{Recipient, Subscription};
 pub struct Event {
     /// Who did it.
     pub from: Recipient,
+    /// The language to answer in, as the messenger reports the person's own.
+    pub locale: Locale,
     /// What they did.
     pub kind: EventKind,
 }
