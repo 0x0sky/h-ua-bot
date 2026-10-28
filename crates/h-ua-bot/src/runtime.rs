@@ -9,7 +9,6 @@ use std::time::Duration;
 use h_ua_core::conversation::Conversation;
 use h_ua_core::message::Message;
 use h_ua_core::ports::{EventKind, Messenger, Subscriptions};
-use h_ua_core::source::Source;
 use h_ua_hub::{HubClient, HubConfig, HubSubscriptions};
 use h_ua_telegram::{CLIENT_NAME, ReqwestTransport, TelegramClient};
 use prism_signal_normalize::Gazetteer;
@@ -58,12 +57,7 @@ pub async fn run(config: Config) -> Result<(), String> {
     let app = delivery::router(DeliveryState::new(secret, telegram));
 
     let mut tasks = tokio::task::JoinSet::new();
-    tasks.spawn(client_loop(
-        messenger,
-        subscriptions,
-        gazetteer,
-        config.sources.clone(),
-    ));
+    tasks.spawn(client_loop(messenger, subscriptions, gazetteer));
     tasks.spawn(async move {
         if let Err(error) = axum::serve(listener, app).await {
             error!(%error, "the delivery endpoint stopped");
@@ -81,7 +75,6 @@ async fn client_loop(
     messenger: Arc<dyn Messenger>,
     subscriptions: Arc<dyn Subscriptions>,
     gazetteer: Arc<Gazetteer>,
-    sources: Vec<Source>,
 ) {
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -90,7 +83,7 @@ async fn client_loop(
                 backoff = Duration::from_secs(1);
                 for event in events {
                     let live = matches!(event.kind, EventKind::Location { live: true, .. });
-                    let replies = Conversation::new(&*subscriptions, &gazetteer, sources.clone())
+                    let replies = Conversation::new(&*subscriptions, &gazetteer)
                         .handle(&event)
                         .await;
                     let replies = match replies {
