@@ -55,7 +55,7 @@ In **0x0sky/h-ua-bot → Settings → Environments → production** configure:
 
 | Kind | Name | Notes |
 | --- | --- | --- |
-| Secret | `HUA_TELEGRAM_TOKEN` | BotFather token |
+| Secret | `TELEGRAM_BOT_TOKEN` | BotFather token; mapped to runtime `HUA_TELEGRAM_TOKEN` by the deploy workflow |
 | Secret | `HUA_HUB_TOKEN` | Scoped Prism Hub machine credential |
 | Secret | `HUA_DELIVERY_SECRET` | At least 32 characters; must match the Prism Hub delivery gateway |
 | Secret | `INFRA_DEPLOY_TOKEN` | Dispatch `aiaiaiai-org/infra` (Contents: write), plus read its Actions runs and artifacts (Actions: read) |

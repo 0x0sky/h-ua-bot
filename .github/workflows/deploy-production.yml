@@ -28,7 +28,7 @@ jobs:
       INFRA_REPOSITORY: aiaiaiai-org/infra
       RELEASE_SHA: ${{ github.sha }}
       RELEASE_REF: ${{ github.ref }}
-      HUA_TELEGRAM_TOKEN: ${{ secrets.HUA_TELEGRAM_TOKEN }}
+      HUA_TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       HUA_HUB_TOKEN: ${{ secrets.HUA_HUB_TOKEN }}
       HUA_DELIVERY_SECRET: ${{ secrets.HUA_DELIVERY_SECRET }}
       HUA_HUB_ORIGIN: ${{ vars.HUA_HUB_ORIGIN || 'https://api.aiaiaiai.org/prism-hub' }}
