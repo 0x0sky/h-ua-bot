@@ -3,8 +3,9 @@
 
 name: Image
 
-# Every pull request proves the image builds. A merge to master publishes it. Neither deploys:
-# a deployment is a separate, explicit request to aiaiaiai-org/infra.
+# Every pull request and every master head proves the image builds. It never publishes: `publish.yml` owns
+# the commit tag and its provenance attestation (a second push of the same tag would replace the attested
+# digest), and infra pulls from there.
 on:
   pull_request:
   push:
@@ -25,7 +26,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Check out source
@@ -36,27 +36,12 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and, off a pull request, publish
+      - name: Build
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          # The tag is the commit, so the image names exactly the source it came from.
+          push: false
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Publish summary
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "image=ghcr.io/${{ github.repository }}:${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "digest=${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

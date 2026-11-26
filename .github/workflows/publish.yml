@@ -1,0 +1,200 @@
+# © 2026 aiaiaiai · aiaiaiai.org
+# SPDX-License-Identifier: MIT
+
+# Publishes each master head that CI verified and attests its provenance, together with its runtime
+# secrets sealed to the target server's public key. aiaiaiai-org/infra finds, verifies and deploys both on
+# its own, on an explicit Reconcile deliveries dispatch (infra docs/automatic-delivery.md). This repository
+# holds no credential for infra and calls no infra API: infra reads the public image and envelope.
+name: Publish image
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: h-ua-bot-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish image
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The runtime secrets live here and leave only encrypted, in the envelope below.
+    environment: production
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the verified revision
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > "$RUNNER_TEMP/source-run.json"
+          jq -e '.conclusion == "success" and .path == ".github/workflows/ci.yml" and .head_repository.full_name == env.GITHUB_REPOSITORY' "$RUNNER_TEMP/source-run.json"
+          sha="$(jq -r .head_sha "$RUNNER_TEMP/source-run.json")"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          # Publish only the current master head, and only when this run is for that same commit: the
+          # attestation then binds the image to exactly the commit infra verifies.
+          head="$(git rev-parse origin/master)"
+          if [[ "$sha" != "$head" || "$sha" != "$GITHUB_SHA" ]]; then
+            echo "::notice::Skipping superseded revision $sha; master is at $head"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Buildx
+        if: steps.source.outputs.current == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.source.outputs.current == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish the verified revision
+        if: steps.source.outputs.current == 'true'
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # The tag is the commit: infra locates the image by the branch head, then trusts only the
+          # digest and its provenance.
+          tags: ghcr.io/${{ github.repository }}:${{ steps.source.outputs.sha }}
+          # One plain image manifest; provenance is attested below by this workflow.
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Attest build provenance
+        if: steps.source.outputs.current == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Resolve the target's recipient and the names it may receive from infra
+        if: steps.source.outputs.current == 'true'
+        id: target
+        run: |
+          set -Eeuo pipefail
+          # infra is public; its reviewed contracts name the server h-ua-bot runs on, that server's public
+          # key and the exact names (secrets and producer variables) the workload may receive. No credential.
+          git clone --quiet --depth 1 https://github.com/aiaiaiai-org/infra.git "$RUNNER_TEMP/infra"
+          ruby -ryaml - "$RUNNER_TEMP/infra" >> "$GITHUB_OUTPUT" <<'RUBY'
+          root = ARGV.fetch(0)
+          load = ->(path) { YAML.safe_load(File.read(path), aliases: false) }
+          servers = Dir["#{root}/contracts/servers/*.yaml"].map(&load).select { |s| Array(s.dig("spec", "workloads")).include?("h-ua-bot") }
+          abort "h-ua-bot must be placed on exactly one server" unless servers.length == 1
+          recipient = servers.first.dig("spec", "encryptionRecipient").to_s
+          abort "#{servers.first.dig('metadata', 'name')} publishes no encryptionRecipient" unless recipient.match?(%r{\Assh-ed25519 [A-Za-z0-9+/]{68}\z})
+          runtime = load.("#{root}/contracts/services/h-ua-bot.yaml").dig("spec", "runtime")
+          secrets = Array(runtime["secrets"]).map { |m| m.split("=", 2).fetch(1) }
+          variables = Array(runtime["producerEnvironment"])
+          abort "the h-ua-bot contract names nothing to seal" if secrets.empty? || variables.empty?
+          puts "server=#{servers.first.dig('metadata', 'name')}"
+          puts "recipient=#{recipient}"
+          puts "names=#{(secrets + variables).sort.join(' ')}"
+          RUBY
+
+      - name: Seal runtime secrets for the target
+        if: steps.source.outputs.current == 'true'
+        env:
+          RECIPIENT: ${{ steps.target.outputs.recipient }}
+          NAMES: ${{ steps.target.outputs.names }}
+          # The bot's token is the Environment secret TELEGRAM_BOT_TOKEN; the contract names the container's
+          # HUA_TELEGRAM_TOKEN. Every other name is the same in both.
+          HUA_TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          HUA_HUB_TOKEN: ${{ secrets.HUA_HUB_TOKEN }}
+          HUA_DELIVERY_SECRET: ${{ secrets.HUA_DELIVERY_SECRET }}
+          HUA_HUB_ORIGIN: ${{ vars.HUA_HUB_ORIGIN || 'https://api.aiaiaiai.org/prism-hub' }}
+          HUA_HUB_PROVIDER_SCOPE: ${{ vars.HUA_HUB_PROVIDER_SCOPE || 'h-ua-bot' }}
+          HUA_ALERT_CHANNEL: ${{ vars.HUA_ALERT_CHANNEL || 'alerts' }}
+          HUA_SOURCES: ${{ vars.HUA_SOURCES || 'vanek_nikolaev,kpszsu,war_monitor,monitorwarr' }}
+        run: |
+          set -Eeuo pipefail
+          # Exactly the names infra's contract allows, or infra rejects the envelope.
+          provided="HUA_ALERT_CHANNEL HUA_DELIVERY_SECRET HUA_HUB_ORIGIN HUA_HUB_PROVIDER_SCOPE HUA_HUB_TOKEN HUA_SOURCES HUA_TELEGRAM_TOKEN"
+          if [[ "$NAMES" != "$provided" ]]; then
+            echo "::error::infra's h-ua-bot contract names [$NAMES]; this workflow seals [$provided]" >&2
+            exit 1
+          fi
+          for name in $provided; do
+            value="${!name:-}"
+            test -n "$value" || { echo "::error::Missing production value $name" >&2; exit 1; }
+            [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || { echo "::error::$name spans lines" >&2; exit 1; }
+          done
+          for name in HUA_HUB_ORIGIN HUA_HUB_PROVIDER_SCOPE HUA_ALERT_CHANNEL HUA_SOURCES; do
+            [[ "${!name}" =~ ^[A-Za-z0-9_./:@+,-]+$ ]] || { echo "::error::Invalid producer variable $name" >&2; exit 1; }
+          done
+          (( ${#HUA_DELIVERY_SECRET} >= 32 )) || { echo '::error::HUA_DELIVERY_SECRET must be at least 32 characters' >&2; exit 1; }
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          umask 077
+          install -d "$RUNNER_TEMP/envelope"
+          trap 'rm -f "$RUNNER_TEMP/secrets.env"' EXIT
+          for name in $provided; do printf '%s=%s\n' "$name" "${!name}"; done > "$RUNNER_TEMP/secrets.env"
+          age --recipient "$RECIPIENT" --output "$RUNNER_TEMP/envelope/secrets.age" "$RUNNER_TEMP/secrets.env"
+          test -s "$RUNNER_TEMP/envelope/secrets.age"
+          printf 'FROM scratch\nCOPY secrets.age /secrets.age\n' > "$RUNNER_TEMP/envelope/Dockerfile"
+
+      - name: Publish the secret envelope
+        if: steps.source.outputs.current == 'true'
+        id: envelope
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ runner.temp }}/envelope
+          push: true
+          # Infra looks for exactly <image>:<commit>.secrets and verifies it like the image.
+          tags: ghcr.io/${{ github.repository }}:${{ steps.source.outputs.sha }}.secrets
+          provenance: false
+          sbom: false
+
+      - name: Attest the secret envelope
+        if: steps.source.outputs.current == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.envelope.outputs.digest }}
+          push-to-registry: true
+
+      - name: Publish summary
+        if: steps.source.outputs.current == 'true'
+        env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ENVELOPE: ${{ steps.envelope.outputs.digest }}
+          SERVER: ${{ steps.target.outputs.server }}
+        run: |
+          {
+            echo "image=ghcr.io/$GITHUB_REPOSITORY:$RELEASE_SHA"
+            echo "digest=$DIGEST"
+            echo "secrets=ghcr.io/$GITHUB_REPOSITORY:$RELEASE_SHA.secrets ($ENVELOPE), sealed for $SERVER"
+            echo 'delivery: aiaiaiai-org/infra Reconcile deliveries picks this up on an explicit dispatch'
+          } >> "$GITHUB_STEP_SUMMARY"

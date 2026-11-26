@@ -2,7 +2,9 @@
 
 This repository owns the Telegram bot and its runtime credentials. The
 `aiaiaiai-org/infra` repository owns the host, SSH, routing and activation.
-Deploy is **manual** and does not run on PR merge.
+Delivery is **pull-based**: this repository publishes an attested image and a
+sealed secret envelope, and infra pulls them on an explicit dispatch. This
+repository holds **no credential for infra** and calls no infra API.
 
 ## Internal alert processing
 
@@ -55,60 +57,49 @@ In **0x0sky/h-ua-bot → Settings → Environments → production** configure:
 
 | Kind | Name | Notes |
 | --- | --- | --- |
-| Secret | `TELEGRAM_BOT_TOKEN` | BotFather token; mapped to runtime `HUA_TELEGRAM_TOKEN` by the deploy workflow |
+| Secret | `TELEGRAM_BOT_TOKEN` | BotFather token; mapped to runtime `HUA_TELEGRAM_TOKEN` by the publish workflow |
 | Secret | `HUA_HUB_TOKEN` | Scoped Prism Hub machine credential |
 | Secret | `HUA_DELIVERY_SECRET` | At least 32 characters; must match the Prism Hub delivery gateway |
-| Secret | `INFRA_DEPLOY_TOKEN` | Dispatch `aiaiaiai-org/infra` (Contents: write), plus read its Actions runs and artifacts (Actions: read) |
 | Variable | `HUA_HUB_ORIGIN` | Optional; defaults to `https://api.aiaiaiai.org/prism-hub` |
 | Variable | `HUA_HUB_PROVIDER_SCOPE` | Optional; defaults to `h-ua-bot` |
 | Variable | `HUA_ALERT_CHANNEL` | Optional; defaults to `alerts` |
 | Variable | `HUA_SOURCES` | Legacy compatibility setting; never exposed to users |
 
-Neither `INFRA_AGE_RECIPIENT` nor `GHCR_PULL_TOKEN`/`GHCR_PULL_USER` nor
+No infra token, `INFRA_AGE_RECIPIENT`, `GHCR_PULL_TOKEN`/`GHCR_PULL_USER` or
 SSH/VPS configuration belongs in this repository. Infra owns its private SSH
 key, target placement, public encryption recipient, and GHCR login.
 
-Before running deployment, make sure the recipient workflow from
-[aiaiaiai-org/infra#47](https://github.com/aiaiaiai-org/infra/pull/47)
-is merged into **infra/master**. The producer stops before dispatch if the
-infra repository cannot be read, the workflow is absent, or its Actions
-metadata cannot be read. A GitHub HTTP 404 may mean an unmerged workflow
-or a token not authorized to access a private repository. Verify that
-`INFRA_DEPLOY_TOKEN` has explicit access to `aiaiaiai-org/infra`,
-`Contents: write`, `Actions: read`, and any required organization approval.
-Do not paste the token into CI logs.
+## How a release reaches the server
 
-The bot requests an infra recipient using `issue-workload-recipient`; infra
-resolves its target and returns a *public-only*, one-day GitHub Actions
-artifact, correlated to the bot workflow run ID. The bot fetches and
-validates it, then encrypts its own three runtime secrets and four runtime variables. The target private
-key never appears in the artifact or dispatch payload. Infra's new recipient
-workflow must be merged before the producer is deployed.
+1. **CI** passes on `master`. The **Publish image** workflow (`publish.yml`,
+   triggered by that CI run alone) builds `ghcr.io/0x0sky/h-ua-bot:<commit>` and
+   attests its provenance.
+2. It reads infra's **public** contracts (`aiaiaiai-org/infra`,
+   `contracts/`): the server `h-ua-bot` is placed on, that server's public
+   encryption recipient, and the exact names the workload may receive (its three
+   runtime secrets and four producer variables). It seals those seven values
+   with `age` to that recipient and publishes the ciphertext as
+   `ghcr.io/0x0sky/h-ua-bot:<commit>.secrets`, attested too. The recipient comes
+   from infra's contract, so moving the bot to another server needs no change here.
+3. Infra, on an explicit **Reconcile deliveries** dispatch for `h-ua-bot`, finds
+   the master head, verifies the digests and provenance of both, opens the
+   envelope with its own deploy key inside the target Environment and activates
+   the release. A head without an envelope is not delivered.
+
+The `Image` workflow only builds (pull requests and `master`): a second push of
+the commit tag would replace the attested digest, so it never publishes.
 
 Infra's `contracts/services/h-ua-bot.yaml` owns placement, network, health,
 registry and an explicit allowlist of environment variable **names**; their
 values belong to the bot's Environment or its in-repository defaults.
-The encrypted envelope is checked against this allowlist before activation.
+Infra needs **Read** access to the `h-ua-bot` package (package settings, not a
+secret). Application secrets are not copied to infra's GitHub Secrets store.
 
-The bot image is published on merge to master by the `Image` workflow. After
-the image is available, manually run **Deploy production** on master.
-The producer verifies the image using its own job-scoped `GITHUB_TOKEN`
-but does not forward that token to infra. It requests and validates an
-infra-owned public encryption recipient, encrypts **only** the three HUA
-runtime secrets plus the four producer-owned HUA variables, and dispatches the
-immutable release image to infra.
-
-Infra authenticates to GHCR using its **own** Environment registry
-credential (`GHCR_PULL_TOKEN`, `GHCR_PULL_USER`) or its job-scoped
-`GITHUB_TOKEN` when that token is authorized to read the package.
-For private images, ensure infra has package-read access.
-Application secrets are not copied to infra's GitHub Secrets store.
-
-**The dispatch job confirms acceptance only, not live activation.** Confirm
-the corresponding `infra → Deploy workload` job succeeds, then test
-`/h-ua-bot/health`, Telegram `/start`, subscription changes and one
-end-to-end alert via Prism Hub. In particular, the Prism Hub delivery worker's
-global target must be reviewed before enabling delivery to multiple bots.
+**Publishing is not activation.** Confirm the corresponding `infra →
+Reconcile deliveries` run succeeds, then test `/hua-bot/health`, Telegram
+`/start`, subscription changes and one end-to-end alert via Prism Hub. In
+particular, the Prism Hub delivery worker's global target must be reviewed
+before enabling delivery to multiple bots.
 
 Do not delete the old target-Environment copies until the new end-to-end
 deployment has succeeded and rollback/redeployment has been validated.

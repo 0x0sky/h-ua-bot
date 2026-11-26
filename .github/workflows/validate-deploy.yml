@@ -6,7 +6,8 @@ name: Validate deploy contract
 on:
   pull_request:
     paths:
-      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/publish.yml'
+      - '.github/workflows/image.yml'
       - '.github/workflows/validate-deploy.yml'
       - 'docs/production-deploy.md'
   workflow_dispatch:
@@ -19,42 +20,32 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Validate encrypted handoff and manual activation
+      - name: Validate pull delivery without any infra credential
         shell: bash
         run: |
           set -Eeuo pipefail
-          file=.github/workflows/deploy-production.yml
+          file=.github/workflows/publish.yml
           validate_contract() {
             local candidate="$1"
-            grep -Fq 'workflow_dispatch:' "$candidate" || return 1
-            if grep -Eq '^[[:space:]]+push:' "$candidate"; then
-              echo "::error::Automatic deployment on push is forbidden." >&2
+            # Only a verified master CI run publishes; nothing else triggers it, and nothing deploys.
+            grep -Fq 'workflow_run:' "$candidate" || return 1
+            grep -Fq 'workflows: [CI]' "$candidate" || return 1
+            if grep -Eq '^  (push|pull_request|workflow_dispatch|repository_dispatch):' "$candidate"; then
+              echo "::error::publish.yml is triggered by CI alone." >&2
               return 1
             fi
-            grep -Fq 'environment:' "$candidate" || return 1
-            grep -Fq 'name: production' "$candidate" || return 1
-            grep -Fq 'issue-workload-recipient' "$candidate" || return 1
-            grep -Fq 'repos/${INFRA_REPOSITORY}/contents/.github/workflows/issue-workload-recipient.yml?ref=master' "$candidate" || return 1
-            grep -Fq 'repos/${INFRA_REPOSITORY}/actions/workflows/issue-workload-recipient.yml' "$candidate" || return 1
-            grep -Fq 'INFRA_DEPLOY_TOKEN cannot access private repository' "$candidate" || return 1
-            grep -Fq 'INFRA_DEPLOY_TOKEN requires Contents: write' "$candidate" || return 1
-            grep -Fq 'gh run download' "$candidate" || return 1
-            grep -Fq 'age --armor --recipient' "$candidate" || return 1
-            grep -Fq 'HUA_TELEGRAM_TOKEN=%s' "$candidate" || return 1
-            grep -Fq 'HUA_HUB_TOKEN=%s' "$candidate" || return 1
-            grep -Fq 'HUA_DELIVERY_SECRET=%s' "$candidate" || return 1
-            grep -Fq 'vars.HUA_HUB_ORIGIN' "$candidate" || return 1
-            grep -Fq 'vars.HUA_HUB_PROVIDER_SCOPE' "$candidate" || return 1
-            grep -Fq 'vars.HUA_ALERT_CHANNEL' "$candidate" || return 1
-            grep -Fq 'vars.HUA_SOURCES' "$candidate" || return 1
-            grep -Fq 'HUA_HUB_ORIGIN=%s' "$candidate" || return 1
-            grep -Fq 'HUA_HUB_PROVIDER_SCOPE=%s' "$candidate" || return 1
-            grep -Fq 'HUA_ALERT_CHANNEL=%s' "$candidate" || return 1
-            grep -Fq 'HUA_SOURCES=%s' "$candidate" || return 1
-            grep -Fq 'secrets_age: $envelope' "$candidate" || return 1
-            grep -Fq 'repos/${INFRA_REPOSITORY}/dispatches' "$candidate" || return 1
-            grep -Fq 'refs/heads/master' "$candidate" || return 1
-            for forbidden in 'SSH_PRIVATE_KEY' 'toJSON(secrets)' 'vars.INFRA_AGE_RECIPIENT' 'secrets.GHCR_PULL_TOKEN' 'vars.GHCR_PULL_USER' 'GHCR_PULL_TOKEN=%s' 'GHCR_PULL_USER=%s'; do
+            grep -Fq 'environment: production' "$candidate" || return 1
+            grep -Fq '.path == ".github/workflows/ci.yml"' "$candidate" || return 1
+            # Provenance for the image and for the envelope, which infra verifies before trusting either.
+            [[ "$(grep -Fc 'actions/attest-build-provenance@v2' "$candidate")" == 2 ]] || return 1
+            grep -Fq ':${{ steps.source.outputs.sha }}.secrets' "$candidate" || return 1
+            grep -Fq 'age --recipient "$RECIPIENT"' "$candidate" || return 1
+            grep -Fq 'git clone --quiet --depth 1 https://github.com/aiaiaiai-org/infra.git' "$candidate" || return 1
+            for name in HUA_TELEGRAM_TOKEN HUA_HUB_TOKEN HUA_DELIVERY_SECRET HUA_HUB_ORIGIN HUA_HUB_PROVIDER_SCOPE HUA_ALERT_CHANNEL HUA_SOURCES; do
+              grep -Fq "$name" "$candidate" || return 1
+            done
+            grep -Fq 'secrets.TELEGRAM_BOT_TOKEN' "$candidate" || return 1
+            for forbidden in 'INFRA_DEPLOY_TOKEN' 'SSH_PRIVATE_KEY' 'toJSON(secrets)' 'GHCR_PULL_TOKEN' 'GHCR_PULL_USER' 'INFRA_AGE_RECIPIENT' 'repos/${INFRA_REPOSITORY}' '/dispatches' 'secrets_age'; do
               if grep -Fq "$forbidden" "$candidate"; then
                 echo "::error::Forbidden producer-owned setting: $forbidden" >&2
                 return 1
@@ -63,37 +54,23 @@ jobs:
           }
 
           validate_contract "$file"
+          # The image workflow only builds: a second push of the commit tag would replace the attested digest.
+          grep -Fq 'push: false' .github/workflows/image.yml
+          ! grep -Fq 'packages: write' .github/workflows/image.yml
+          ! test -e .github/workflows/deploy-production.yml
 
           # Mutation regression cases: each forbidden construct must fail.
           fixtures="$(mktemp -d)"
           trap 'rm -rf "$fixtures"' EXIT
           cp "$file" "$fixtures/push.yml"
           sed -i '/^on:$/a\  push:' "$fixtures/push.yml"
-          grep -Fq '  push:' "$fixtures/push.yml"
-          if validate_contract "$fixtures/push.yml"; then
-            echo "::error::Push trigger regression was accepted." >&2
-            exit 1
-          fi
-
-          cp "$file" "$fixtures/ssh.yml"
-          printf '%s\n' '      SSH_PRIVATE_KEY: forbidden' >> "$fixtures/ssh.yml"
-          if validate_contract "$fixtures/ssh.yml"; then
-            echo "::error::Private key regression was accepted." >&2
-            exit 1
-          fi
-
-          cp "$file" "$fixtures/secrets.yml"
-          printf '%s\n' '      forbidden: toJSON(secrets)' >> "$fixtures/secrets.yml"
-          if validate_contract "$fixtures/secrets.yml"; then
-            echo "::error::All-secrets regression was accepted." >&2
-            exit 1
-          fi
-
-          for forbidden in 'vars.INFRA_AGE_RECIPIENT' 'secrets.GHCR_PULL_TOKEN' 'vars.GHCR_PULL_USER'; do
-            cp "$file" "$fixtures/foreign.yml"
-            printf '%s\n' "      forbidden: $forbidden" >> "$fixtures/foreign.yml"
-            if validate_contract "$fixtures/foreign.yml"; then
-              echo "::error::Foreign infra setting regression was accepted: $forbidden" >&2
-              exit 1
-            fi
+          ! validate_contract "$fixtures/push.yml" || { echo "::error::Push trigger regression was accepted." >&2; exit 1; }
+          for forbidden in INFRA_DEPLOY_TOKEN SSH_PRIVATE_KEY 'toJSON(secrets)' secrets_age; do
+            cp "$file" "$fixtures/forbidden.yml"
+            printf '%s\n' "      forbidden: $forbidden" >> "$fixtures/forbidden.yml"
+            ! validate_contract "$fixtures/forbidden.yml" || { echo "::error::Regression was accepted: $forbidden" >&2; exit 1; }
           done
+          cp "$file" "$fixtures/noattest.yml"
+          sed -i 's|actions/attest-build-provenance@v2|actions/checkout@v4|' "$fixtures/noattest.yml"
+          ! validate_contract "$fixtures/noattest.yml" || { echo "::error::Missing attestation was accepted." >&2; exit 1; }
+          echo "pull delivery contract is valid"
